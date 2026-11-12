@@ -66,16 +66,18 @@ URL Scheme (`Raycast` / `Alfred` / `Shortcuts`):
 
 ## Installation & Build
 
+### Homebrew (Recommended — installs both App & `sleepguard` CLI)
+
+```bash
+brew install --cask --no-quarantine laiyongqiang/tap/sleepguard
+```
+
 ### Download Release (Universal: Apple Silicon + Intel)
 
 1. Download `SleepGuard-1.1.0-macOS-universal.dmg` from [GitHub Releases](https://github.com/LaiYongqiang/SleepGuard/releases) and drag `SleepGuard.app` to `/Applications`.
 2. Since release builds are ad-hoc signed without a paid Apple Developer ID, run once if Gatekeeper blocks first launch:
    ```bash
    xattr -cr /Applications/SleepGuard.app
-   ```
-   Or install via the included [Homebrew Cask](Packaging/Homebrew/sleepguard.rb):
-   ```bash
-   brew install --cask --no-quarantine ./Packaging/Homebrew/sleepguard.rb
    ```
 
 ### Build from Source (macOS 13+)

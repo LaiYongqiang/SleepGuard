@@ -63,16 +63,18 @@ URL Scheme（适用 Raycast / Alfred / 快捷指令）：
 
 ## 安装与从源码构建（macOS 13+）
 
+### Homebrew 一键安装（推荐：同时安装 App 与 `sleepguard` CLI）
+
+```bash
+brew install --cask --no-quarantine laiyongqiang/tap/sleepguard
+```
+
 ### 下载 Release（通用二进制：Apple Silicon + Intel）
 
 1. 前往 [GitHub Releases](https://github.com/LaiYongqiang/SleepGuard/releases) 下载 `SleepGuard-1.1.0-macOS-universal.dmg`，拖入 `/Applications`。
 2. 当前开源发行包采用本地 Ad-hoc 签名；若首次双击遇 macOS Gatekeeper 拦截，在终端执行一次：
    ```bash
    xattr -cr /Applications/SleepGuard.app
-   ```
-   也可使用仓库自带的 [Homebrew Cask](Packaging/Homebrew/sleepguard.rb) 安装（同时自动配置 `sleepguard` CLI）：
-   ```bash
-   brew install --cask --no-quarantine ./Packaging/Homebrew/sleepguard.rb
    ```
 
 ### 从源码构建
