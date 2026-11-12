@@ -17,6 +17,10 @@ struct SleepGuardPopoverView: View {
                 staleSleepBanner
             }
 
+            if let cli = manager.externalCLI {
+                cliBanner(cli)
+            }
+
             if manager.showSettings {
                 settingsContent
             } else if manager.isRunning {
@@ -34,9 +38,9 @@ struct SleepGuardPopoverView: View {
 
     private var headerBar: some View {
         HStack(spacing: 8) {
-            Image(systemName: manager.isRunning ? "cup.and.saucer.fill" : "cup.and.saucer")
+            Image(systemName: manager.isEffectivelyActive ? "cup.and.saucer.fill" : "cup.and.saucer")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(manager.isRunning ? .accentColor : .primary)
+                .foregroundColor(manager.isEffectivelyActive ? .accentColor : .primary)
 
             Text(t.appName)
                 .font(.system(size: 14, weight: .semibold))
@@ -48,6 +52,13 @@ struct SleepGuardPopoverView: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color.green.opacity(0.14)))
+            } else if manager.externalCLI != nil {
+                Text("CLI")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.blue.opacity(0.14)))
             }
 
             Spacer()
@@ -74,7 +85,7 @@ struct SleepGuardPopoverView: View {
             Text(message)
                 .font(.system(size: 11))
                 .foregroundColor(.primary)
-                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer()
             Button(action: { manager.errorMessage = nil }) {
                 Image(systemName: "xmark")
@@ -118,11 +129,34 @@ struct SleepGuardPopoverView: View {
         )
     }
 
+    private func cliBanner(_ cli: ExternalCLISession) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "terminal")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.blue)
+            Text(t.cliGuardingBanner(cli))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.blue.opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.blue.opacity(0.22), lineWidth: 1)
+        )
+    }
+
     // MARK: - Idle View
 
     private var idleContent: some View {
         VStack(spacing: 12) {
-            // Status summary
             VStack(spacing: 4) {
                 HStack(spacing: 6) {
                     Circle()
@@ -145,7 +179,6 @@ struct SleepGuardPopoverView: View {
                     .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
             )
 
-            // Mode cards
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(t.modeSectionTitle)
@@ -157,7 +190,6 @@ struct SleepGuardPopoverView: View {
                         .foregroundColor(.secondary)
                 }
 
-                // Mode A: Background (with nested lock & closed-lid toggles)
                 VStack(spacing: 0) {
                     modeRow(
                         mode: .background,
@@ -203,7 +235,6 @@ struct SleepGuardPopoverView: View {
                 .background(cardBackground(selected: manager.config.mode == .background))
                 .overlay(cardBorder(selected: manager.config.mode == .background))
 
-                // Mode B: Keep Display On
                 modeRow(
                     mode: .keepDisplay,
                     isSelected: manager.config.mode == .keepDisplay,
@@ -215,7 +246,6 @@ struct SleepGuardPopoverView: View {
                 .overlay(cardBorder(selected: manager.config.mode == .keepDisplay))
             }
 
-            // Duration section
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(t.durationSectionTitle)
@@ -280,7 +310,6 @@ struct SleepGuardPopoverView: View {
                 }
             }
 
-            // Primary Start CTA
             Button(action: {
                 manager.startConfiguredSession()
             }) {
@@ -312,7 +341,6 @@ struct SleepGuardPopoverView: View {
 
     private var runningContent: some View {
         VStack(spacing: 12) {
-            // Big countdown card
             VStack(spacing: 5) {
                 HStack(spacing: 6) {
                     Circle()
@@ -356,7 +384,6 @@ struct SleepGuardPopoverView: View {
                     .stroke(Color.green.opacity(0.22), lineWidth: 1)
             )
 
-            // Live mode switching (preserves remaining duration)
             VStack(alignment: .leading, spacing: 6) {
                 Text(t.modeSectionTitle)
                     .font(.system(size: 11, weight: .medium))
@@ -383,7 +410,6 @@ struct SleepGuardPopoverView: View {
                 .overlay(cardBorder(selected: manager.activeMode == .keepDisplay))
             }
 
-            // Duration info + Extend 30m
             HStack {
                 Text(t.currentSettingLabel(DurationFormatter.formatDuration(manager.initialMinutes, isChinese: t.isZh)))
                     .font(.system(size: 11))
@@ -398,7 +424,6 @@ struct SleepGuardPopoverView: View {
                 }
             }
 
-            // Stop button (low-emphasis destructive style)
             Button(action: {
                 manager.stopSession(reason: .manual)
             }) {
@@ -425,10 +450,9 @@ struct SleepGuardPopoverView: View {
 
             Divider()
 
-            // Bottom quick utilities
             HStack {
                 Button(action: {
-                    ScreenLocker.lockScreen()
+                    ScreenLocker.lockScreenImmediate()
                     manager.onRequestClosePopover?()
                 }) {
                     HStack(spacing: 5) {
@@ -475,6 +499,21 @@ struct SleepGuardPopoverView: View {
                     Toggle("", isOn: Binding(
                         get: { manager.launchAtLogin },
                         set: { manager.toggleLaunchAtLogin($0) }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(SwitchToggleStyle())
+                    .controlSize(.small)
+                }
+
+                Divider()
+
+                HStack {
+                    Text(t.stopOnUnplugLabel)
+                        .font(.system(size: 12))
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { manager.config.stopOnUnplug },
+                        set: { manager.setStopOnUnplug($0) }
                     ))
                     .labelsHidden()
                     .toggleStyle(SwitchToggleStyle())
@@ -536,7 +575,7 @@ struct SleepGuardPopoverView: View {
             }
 
             HStack {
-                Button("GitHub: LaiYongqiang/SleepGuard") {
+                Button("v1.1.0 · GitHub") {
                     if let url = URL(string: "https://github.com/LaiYongqiang/SleepGuard") {
                         NSWorkspace.shared.open(url)
                     }
@@ -545,6 +584,13 @@ struct SleepGuardPopoverView: View {
                 .font(.system(size: 11))
 
                 Spacer()
+
+                Button(t.quitButton) {
+                    manager.stopSession(reason: .silent)
+                    NSApp.terminate(nil)
+                }
+                .buttonStyle(BorderedButtonStyle())
+                .controlSize(.small)
 
                 Button(t.backButton) {
                     manager.showSettings = false

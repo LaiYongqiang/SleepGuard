@@ -2,6 +2,35 @@ import Cocoa
 import Foundation
 import SwiftUI
 
+final class PreviewCaffeinate: CaffeinateRunning {
+    var isActive: Bool = false
+    func start(mode: GuardMode, timeoutSeconds: Int?, onUnexpectedExit: @escaping () -> Void) throws { isActive = true }
+    func stop() { isActive = false }
+}
+
+final class PreviewBackpack: BackpackGuarding {
+    func enable(completion: @escaping (Result<Void, Error>) -> Void) { completion(.success(())) }
+    func disable() {}
+    func checkSleepDisabledAsync(completion: @escaping (Bool) -> Void) { completion(false) }
+    func restoreNormalSleepAsync(completion: @escaping (Result<Void, Error>) -> Void) { completion(.success(())) }
+}
+
+final class PreviewPower: PowerMonitoring {
+    func currentPowerSnapshot() -> PowerSnapshot? { PowerSnapshot(onBattery: false, percentage: 100) }
+    func start(thresholdPercent: Int, stopOnUnplug: Bool, onEvent: @escaping (PowerEvent) -> Void) {}
+    func stop() {}
+}
+
+final class PreviewLocker: ScreenLocking { func lockScreen() {} }
+final class PreviewNotifier: UserNotifying {
+    func preparePermissionIfNeeded() {}
+    func send(title: String, body: String) {}
+}
+final class PreviewLogin: LoginItemControlling {
+    var isEnabled: Bool = false
+    func setEnabled(_ enabled: Bool) throws { isEnabled = enabled }
+}
+
 @main
 struct ScreenshotRenderer {
     static func render(view: some View, appearance: NSAppearance.Name, outPath: String) {
@@ -37,7 +66,16 @@ struct ScreenshotRenderer {
         defer { defaults.removePersistentDomain(forName: tempSuite) }
         let store = PreferencesStore(defaults: defaults)
 
-        let manager = SessionManager(store: store)
+        let manager = SessionManager(
+            store: store,
+            caffeinateRunner: PreviewCaffeinate(),
+            backpackGuard: PreviewBackpack(),
+            powerMonitor: PreviewPower(),
+            screenLocker: PreviewLocker(),
+            notifier: PreviewNotifier(),
+            loginItem: PreviewLogin(),
+            checkStaleSleepOnInit: false
+        )
         manager.config.language = .zhHans
         manager.staleSleepDisabled = false
         manager.isRunning = false

@@ -4,8 +4,9 @@ import Foundation
 import IOKit.ps
 import ServiceManagement
 import SleepGuardCore
+import UserNotifications
 
-final class CaffeinateRunner {
+final class CaffeinateRunner: CaffeinateRunning {
     private var process: Process?
 
     var isActive: Bool {
@@ -45,7 +46,7 @@ final class CaffeinateRunner {
     }
 }
 
-final class BackpackGuard {
+final class BackpackGuard: BackpackGuarding {
     private var sentinelProcess: Process?
     private var sentinelPipe: Pipe?
 
@@ -102,7 +103,7 @@ final class BackpackGuard {
         sentinelProcess = nil
     }
 
-    static func checkSleepDisabledAsync(completion: @escaping (Bool) -> Void) {
+    func checkSleepDisabledAsync(completion: @escaping (Bool) -> Void) {
         DispatchQueue.global(qos: .utility).async {
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
@@ -123,7 +124,7 @@ final class BackpackGuard {
         }
     }
 
-    static func restoreNormalSleepAsync(completion: @escaping (Result<Void, Error>) -> Void) {
+    func restoreNormalSleepAsync(completion: @escaping (Result<Void, Error>) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             var errorDict: NSDictionary?
             let script = NSAppleScript(source: "do shell script \"/usr/bin/pmset -a disablesleep 0\" with administrator privileges")
@@ -142,17 +143,41 @@ final class BackpackGuard {
     }
 }
 
-final class PowerMonitor {
+final class PowerMonitor: PowerMonitoring {
     private var runLoopSource: CFRunLoopSource?
     private var thresholdPercent: Int = 0
-    private var callback: ((Int) -> Void)?
+    private var stopOnUnplug: Bool = false
+    private var wasOnBattery: Bool? = nil
+    private var callback: ((PowerEvent) -> Void)?
 
-    func start(thresholdPercent: Int, onLowBattery: @escaping (Int) -> Void) {
+    func currentPowerSnapshot() -> PowerSnapshot? {
+        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] else {
+            return nil
+        }
+
+        for ps in list {
+            guard let info = IOPSGetPowerSourceDescription(snapshot, ps)?.takeUnretainedValue() as? [String: Any] else {
+                continue
+            }
+            guard let powerState = info[kIOPSPowerSourceStateKey as String] as? String else {
+                continue
+            }
+            let onBattery = (powerState == kIOPSBatteryPowerValue)
+            let capacity = info[kIOPSCurrentCapacityKey as String] as? Int
+            return PowerSnapshot(onBattery: onBattery, percentage: capacity)
+        }
+        return nil
+    }
+
+    func start(thresholdPercent: Int, stopOnUnplug: Bool, onEvent: @escaping (PowerEvent) -> Void) {
         stop()
-        guard thresholdPercent > 0 else { return }
+        guard thresholdPercent > 0 || stopOnUnplug else { return }
 
         self.thresholdPercent = thresholdPercent
-        self.callback = onLowBattery
+        self.stopOnUnplug = stopOnUnplug
+        self.wasOnBattery = currentPowerSnapshot()?.onBattery
+        self.callback = onEvent
 
         let unmanagedSelf = Unmanaged.passUnretained(self).toOpaque()
         if let source = IOPSNotificationCreateRunLoopSource({ context in
@@ -173,30 +198,27 @@ final class PowerMonitor {
             runLoopSource = nil
         }
         callback = nil
+        wasOnBattery = nil
     }
 
     private func evaluatePowerState() {
-        guard thresholdPercent > 0, let callback else { return }
-        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-              let list = IOPSCopyPowerSourcesList(snapshot)?.takeRetainedValue() as? [CFTypeRef] else {
+        guard thresholdPercent > 0 || stopOnUnplug, let callback else { return }
+        guard let snapshot = currentPowerSnapshot() else { return }
+
+        if stopOnUnplug, let prev = wasOnBattery, prev == false, snapshot.onBattery {
+            self.stop()
+            DispatchQueue.main.async {
+                callback(.unplugged)
+            }
             return
         }
+        wasOnBattery = snapshot.onBattery
 
-        for ps in list {
-            guard let info = IOPSGetPowerSourceDescription(snapshot, ps)?.takeUnretainedValue() as? [String: Any] else {
-                continue
-            }
-            guard let powerState = info[kIOPSPowerSourceStateKey as String] as? String,
-                  powerState == kIOPSBatteryPowerValue,
-                  let currentCapacity = info[kIOPSCurrentCapacityKey as String] as? Int else {
-                continue
-            }
-            if currentCapacity <= thresholdPercent {
-                self.stop()
-                DispatchQueue.main.async {
-                    callback(currentCapacity)
-                }
-                return
+        if thresholdPercent > 0, snapshot.onBattery,
+           let pct = snapshot.percentage, pct <= thresholdPercent {
+            self.stop()
+            DispatchQueue.main.async {
+                callback(.lowBattery(pct))
             }
         }
     }
@@ -206,8 +228,8 @@ final class PowerMonitor {
     }
 }
 
-enum ScreenLocker {
-    static func lockScreen() {
+final class ScreenLocker: ScreenLocking {
+    static func lockScreenImmediate() {
         typealias LockFn = @convention(c) () -> Void
         if let handle = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY),
            let sym = dlsym(handle, "SACLockScreenImmediate") {
@@ -223,27 +245,46 @@ enum ScreenLocker {
         task.standardError = FileHandle.nullDevice
         try? task.run()
     }
-}
 
-enum Notifier {
-    static func send(title: String, body: String) {
-        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
-        let escapedBody = body.replacingOccurrences(of: "\"", with: "\\\"")
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", "display notification \"\(escapedBody)\" with title \"\(escapedTitle)\""]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        try? task.run()
+    func lockScreen() {
+        Self.lockScreenImmediate()
     }
 }
 
-enum LoginItemManager {
-    static var isEnabled: Bool {
+final class NativeNotifier: UserNotifying {
+    private var didRequestPermission = false
+
+    private var isAppBundle: Bool {
+        Bundle.main.bundleURL.pathExtension == "app" && Bundle.main.bundleIdentifier != nil
+    }
+
+    func preparePermissionIfNeeded() {
+        guard isAppBundle, !didRequestPermission else { return }
+        didRequestPermission = true
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    func send(title: String, body: String) {
+        guard isAppBundle else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "io.github.laiyongqiang.SleepGuard.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+}
+
+final class LoginItemManager: LoginItemControlling {
+    var isEnabled: Bool {
         SMAppService.mainApp.status == .enabled
     }
 
-    static func setEnabled(_ enabled: Bool) throws {
+    func setEnabled(_ enabled: Bool) throws {
         if enabled {
             if SMAppService.mainApp.status != .enabled {
                 try SMAppService.mainApp.register()

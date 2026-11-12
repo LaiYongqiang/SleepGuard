@@ -64,6 +64,12 @@ public struct L10n {
         isZh ? "预计 \(time) 结束" : "Ends around \(time)"
     }
 
+    public func cliGuardingBanner(_ cli: ExternalCLISession) -> String {
+        isZh
+            ? "CLI 守护中：\(cli.commandName) (PID \(cli.pid))"
+            : "CLI Guarding: \(cli.commandName) (PID \(cli.pid))"
+    }
+
     public func lastConfigSummary(_ config: SessionConfig) -> String {
         let modeTxt = isZh
             ? (config.mode == .background ? "后台" : "常亮")
@@ -81,19 +87,32 @@ public struct L10n {
     }
     public var restoreSleepButton: String { isZh ? "立即恢复" : "Restore" }
 
+    public func lowBatteryBlockedError(current: Int, threshold: Int) -> String {
+        isZh
+            ? "当前电量 \(current)% 已低于保护阈值 \(threshold)%，请连接电源或调整阈值"
+            : "Battery is at \(current)% (cutoff \(threshold)%); connect power or adjust threshold"
+    }
+
+    public var unpluggedBlockedError: String {
+        isZh
+            ? "已开启「拔电时自动停止」，当前正在使用电池"
+            : "Currently on battery while Stop on Unplug is enabled"
+    }
+
     // Settings
     public var settingsTitle: String { isZh ? "偏好设置与规范" : "Preferences & Specs" }
     public var backButton: String { isZh ? "返回" : "Done" }
     public var launchAtLoginLabel: String { isZh ? "登录时自动启动" : "Launch at Login" }
+    public var stopOnUnplugLabel: String { isZh ? "拔掉电源时自动停止" : "Stop when unplugged" }
     public var batteryCutoffLabel: String { isZh ? "低电量自动停止" : "Low-Battery Cutoff" }
     public var batteryCutoffOff: String { isZh ? "关闭" : "Off" }
     public var languageLabel: String { isZh ? "界面语言" : "Language" }
     public var languageSystem: String { isZh ? "跟随系统" : "System" }
-    public var engineInfoTitle: String { isZh ? "底层引擎与架构原则" : "Engine & Architecture" }
+    public var engineInfoTitle: String { isZh ? "底层引擎与 CLI 伴侣" : "Engine & CLI Companion" }
     public var engineInfoDetail: String {
         isZh
-            ? "基于 macOS 原生 caffeinate -w <PID>，收起面板后销毁定时器（0% 后台 CPU）；采用事件驱动电量监听与进程绑定自愈。"
-            : "Powered by native caffeinate -w <PID>. Zero timers when closed (0% idle CPU); event-driven battery protection."
+            ? "基于 macOS 原生 caffeinate -w <PID>，收起面板零定时器（0% CPU）。支持 sleepguard:// URL 与 CLI 守护：sleepguard -- codex。"
+            : "Native caffeinate -w <PID>, zero timers when closed (0% CPU). Supports sleepguard:// URLs & CLI guard: sleepguard -- codex."
     }
 
     // Menu bar context menu
@@ -101,15 +120,19 @@ public struct L10n {
     public var menuQuickStart: String { isZh ? "按上次配置快速开启" : "Quick Start (Last Config)" }
     public var menuStop: String { isZh ? "停止保持唤醒" : "Stop Keeping Awake" }
 
-    // Notifications
-    public var notifStartedTitle: String { isZh ? "防休眠已开启" : "SleepGuard Active" }
-    public var notifStoppedTitle: String { isZh ? "防休眠已停止" : "SleepGuard Stopped" }
-    public var notifExpiredBody: String { isZh ? "预设时长已到期，恢复正常休眠" : "Timer expired; normal sleep restored" }
-    public var notifStoppedBody: String { isZh ? "已释放唤醒断言，恢复正常休眠" : "Assertion released; normal sleep restored" }
+    // Notifications (delivered only on asynchronous background transitions)
+    public var notifStoppedTitle: String { isZh ? "防休眠已自动停止" : "SleepGuard Stopped" }
+    public var notifExpiredBody: String { isZh ? "预设时长已到期，系统已恢复正常休眠" : "Timer expired; normal sleep restored" }
     public var notifLowBatteryTitle: String { isZh ? "低电量自动保护" : "Low Battery Cutoff" }
     public func notifLowBatteryBody(_ pct: Int) -> String {
         isZh
             ? "电池电量已降至 \(pct)%，已自动停止防休眠并恢复系统休眠"
             : "Battery reached \(pct)%; SleepGuard stopped to protect battery"
+    }
+    public var notifUnpluggedTitle: String { isZh ? "电源已断开" : "Power Disconnected" }
+    public var notifUnpluggedBody: String {
+        isZh
+            ? "检测到切换至电池供电，已自动停止防休眠"
+            : "Switched to battery power; SleepGuard stopped automatically"
     }
 }

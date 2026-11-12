@@ -1,6 +1,6 @@
 # SleepGuard（防休眠助手）
 
-**专为 Vibe Coding 与 AI Agent 时代打造的极致轻量 macOS 原生菜单栏防休眠工具。**
+**专为 Vibe Coding 与 AI Agent 时代打造的极致轻量 macOS 原生菜单栏 + CLI 防休眠工具。**
 
 [English](README.md) · [产品需求文档 (PRD)](docs/PRD.md)
 
@@ -19,27 +19,63 @@
 ## 核心特色
 
 - **极致零后台唤醒（0.0% CPU）**：直接基于 macOS 原生 `/usr/bin/caffeinate`。倒计时定时器仅在 Popover 展开可见时运行，收起后彻底销毁，待机与后台运行零唤醒。
-- **零孤儿进程守护**：所有 `caffeinate` 子进程均通过 `-w <APP_PID>` 绑定主应用生命周期，无论正常退出还是意外强杀，系统内核自动回收断言。
-- **记忆配置 + 一次回车直启**：自动记住上一次模式、锁屏/合盖选项与时长。打开面板按 `Enter` 即可按上次配置启动；运行中按 `Enter` 或 `Esc` 立即收起。
+- **零孤儿进程守护**：所有 `caffeinate` 子进程均通过 `-w <APP_PID>` 绑定生命周期，无论正常退出还是意外强杀，系统内核自动回收断言。
+- **记忆配置 + 一次回车直启**：自动记住上一次模式、锁屏/合盖选项与时长。打开面板按 `Enter` 即可按上次配置启动；支持不锁屏启动时留在本面板显示大号倒计时，按 `Enter` 或 `Esc` 随时收起。
+- **CLI 伴侣守护（`sleepguard -- <cmd>`）**：直接包裹终端中的 Agent 或编译命令，任务运行期间防休眠，任务结束瞬间释放断言并可选自动锁屏，菜单栏通过内核 `kqueue` 被动同步状态（`0.0%` 额外开销）。
+- **URL Scheme 快捷联动**：支持 `sleepguard://start` / `stop` / `toggle` / `lock`，轻松接入 Raycast、Alfred 与 macOS 快捷指令。
 - **两种纯正运行模式**：
   - **后台运行**（`caffeinate -i`，默认）：阻止系统空闲睡眠、允许屏幕熄灭省电。支持记忆开关「启动即锁屏」与可选「合盖继续运行（背包模式）」。
   - **屏幕常亮**（`caffeinate -di`）：保持系统与桌面窗口渲染活跃，适合 **Computer Use 桌面操控**、投屏演示与日志监看。（*跑 Computer Use 时建议手动把屏幕亮度调至最低以兼顾省电*）
 - **真正在背包里可用的「合盖模式」**：默认关闭、显式勾选并经系统 Touch ID / 管理员授权执行 `pmset -a disablesleep 1`，配合内核 `kqueue` + `trap` 守护机制，停止、超时或应用崩溃退出时自动恢复 `disablesleep 0`。
-- **零轮询低电量安全阈值**：基于 `IOKit.ps` `IOPSNotificationCreateRunLoopSource` 事件回调（默认低于 `10%` 且未充电时自动停止并恢复休眠保护）。
+- **零轮询电源安全保护**：基于 `IOKit.ps` `IOPSNotificationCreateRunLoopSource` 事件回调（默认低于 `10%` 且未充电时自动停止；可选「拔掉电源时自动停止」；并在启动前预检避免无效授权弹窗）。仅在定时到期或电源保护触发时发送原生系统通知。
 
 ---
 
-## 原生 macOS 交互细节
+## CLI 伴侣与 URL 自动化
 
-- **左键菜单栏图标**：展开 / 收起 Popover 卡片
-- **右键菜单栏图标**：快速启动上次配置、立即停止、锁定屏幕、开关「登录时自动启动」（`SMAppService`）、打开偏好设置
-- **全键盘闭环**：`Enter` 直启 / 收起、`Esc` 返回 / 关闭、`Cmd+,` 偏好设置、`Cmd+Q` 安全退出
-- **单实例保护**：重复打开自动唤起已有菜单栏面板，不产生重复图标
-- **双语自适应**：自动跟随系统切换简体中文 / English，亦可在设置中手动指定
+建立一次软链接即可在终端全局使用：
+
+```bash
+sudo ln -sf /Applications/SleepGuard.app/Contents/MacOS/SleepGuard /usr/local/bin/sleepguard
+```
+
+常用命令：
+
+```bash
+# 让 Mac 在 Codex 运行期间保持唤醒，结束后自动恢复正常休眠
+sleepguard -- codex "refactor auth module"
+
+# 运行 Computer Use 任务期间保持屏幕常亮，结束后立即锁屏
+sleepguard --display --lock -- python agent.py
+
+# 跟随已在运行中的进程 PID
+sleepguard watch 12345 --lock
+```
+
+URL Scheme（适用 Raycast / Alfred / 快捷指令）：
+- `sleepguard://start?mode=background&minutes=240&lock=1`
+- `sleepguard://start?mode=display&minutes=60&lock=0`
+- `sleepguard://stop`
+- `sleepguard://toggle`
+- `sleepguard://lock`
 
 ---
 
-## 从源码构建（macOS 13+）
+## 安装与从源码构建（macOS 13+）
+
+### 下载 Release（通用二进制：Apple Silicon + Intel）
+
+1. 前往 [GitHub Releases](https://github.com/LaiYongqiang/SleepGuard/releases) 下载 `SleepGuard-1.1.0-macOS-universal.dmg`，拖入 `/Applications`。
+2. 当前开源发行包采用本地 Ad-hoc 签名；若首次双击遇 macOS Gatekeeper 拦截，在终端执行一次：
+   ```bash
+   xattr -cr /Applications/SleepGuard.app
+   ```
+   也可使用仓库自带的 [Homebrew Cask](Packaging/Homebrew/sleepguard.rb) 安装（同时自动配置 `sleepguard` CLI）：
+   ```bash
+   brew install --cask --no-quarantine ./Packaging/Homebrew/sleepguard.rb
+   ```
+
+### 从源码构建
 
 仅需安装 Xcode Command Line Tools（Swift 5.10+），无需完整 Xcode：
 
@@ -47,10 +83,10 @@
 git clone https://github.com/LaiYongqiang/SleepGuard.git
 cd SleepGuard
 
-# 运行单元测试与 caffeinate -w 生命周期测试
-swift test
+# 运行状态机单测与 caffeinate -w 生命周期测试
+./scripts/verify.sh
 
-# 构建 SleepGuard.app、ZIP 与 DMG 安装包（输出到 ./dist/）
+# 构建 Universal (arm64+x86_64) SleepGuard.app、ZIP 与 DMG（输出到 ./dist/）
 chmod +x scripts/build_app.sh
 ./scripts/build_app.sh
 ```

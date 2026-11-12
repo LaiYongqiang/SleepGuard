@@ -4,17 +4,37 @@ import Foundation
 import SleepGuardCore
 import SwiftUI
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
-    private static let openPopoverNotification = Notification.Name("io.github.laiyongqiang.SleepGuard.OpenPopover")
+enum IPCNotifications {
+    static let openPopover = Notification.Name("io.github.laiyongqiang.SleepGuard.OpenPopover")
+    static let cliStarted = Notification.Name("io.github.laiyongqiang.SleepGuard.CLIStarted")
+    static let cliStopped = Notification.Name("io.github.laiyongqiang.SleepGuard.CLIStopped")
+}
 
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var displayTimer: Timer?
     private var keyMonitor: Any?
     private var sigTermSource: DispatchSourceSignal?
     private var sigIntSource: DispatchSourceSignal?
+    private var cliProcessSource: DispatchSourceProcess?
+    private var wakeObserver: NSObjectProtocol?
 
-    let sessionManager = SessionManager()
+    private let store = PreferencesStore()
+    let sessionManager: SessionManager
+
+    override init() {
+        self.sessionManager = SessionManager(
+            store: store,
+            caffeinateRunner: CaffeinateRunner(),
+            backpackGuard: BackpackGuard(),
+            powerMonitor: PowerMonitor(),
+            screenLocker: ScreenLocker(),
+            notifier: NativeNotifier(),
+            loginItem: LoginItemManager()
+        )
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if terminateIfDuplicateInstance() {
@@ -25,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         NSApp.setActivationPolicy(.accessory)
         setupSignalHandlers()
         setupDistributedNotifications()
+        setupWorkspaceNotifications()
         setupStatusItem()
         setupPopover()
         setupKeyboardShortcuts()
@@ -36,11 +57,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             self?.closePopover()
         }
 
-        updateStatusItemAppearance(active: sessionManager.isRunning, closedLid: sessionManager.activeClosedLid)
+        updateStatusItemAppearance(
+            active: sessionManager.isEffectivelyActive,
+            closedLid: sessionManager.activeClosedLid
+        )
 
-        if CommandLine.arguments.contains("--open") {
+        let shouldOpen = CommandLine.arguments.contains("--open") || !store.hasShownOnboarding
+        store.hasShownOnboarding = true
+        if shouldOpen {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 self.showPopover()
+            }
+        }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard let command = URLCommandParser.parse(url) else { continue }
+            sessionManager.applyURLCommand(command)
+            if case .open = command {
+                showPopover()
             }
         }
     }
@@ -52,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 .filter { $0.processIdentifier != currentPID }
             if !others.isEmpty {
                 DistributedNotificationCenter.default().postNotificationName(
-                    Self.openPopoverNotification,
+                    IPCNotifications.openPopover,
                     object: nil,
                     userInfo: nil,
                     deliverImmediately: true
@@ -64,18 +100,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func setupDistributedNotifications() {
-        DistributedNotificationCenter.default().addObserver(
+        let center = DistributedNotificationCenter.default()
+        center.addObserver(
             self,
             selector: #selector(handleExternalOpenRequest),
-            name: Self.openPopoverNotification,
+            name: IPCNotifications.openPopover,
             object: nil
         )
+        center.addObserver(
+            self,
+            selector: #selector(handleCLIStarted(_:)),
+            name: IPCNotifications.cliStarted,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(handleCLIStopped(_:)),
+            name: IPCNotifications.cliStopped,
+            object: nil
+        )
+    }
+
+    private func setupWorkspaceNotifications() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.sessionManager.reconcileOnWakeOrShow()
+        }
     }
 
     @objc private func handleExternalOpenRequest() {
         DispatchQueue.main.async {
             self.showPopover()
         }
+    }
+
+    @objc private func handleCLIStarted(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let pidNum = info["pid"] as? NSNumber else { return }
+        let pid = pidNum.int32Value
+        let name = (info["cmd"] as? String) ?? "cli"
+        let modeRaw = (info["mode"] as? String) ?? GuardMode.background.rawValue
+        let mode = GuardMode(rawValue: modeRaw) ?? .background
+
+        DispatchQueue.main.async {
+            self.watchExternalCLIPID(pid)
+            self.sessionManager.setExternalCLISession(
+                ExternalCLISession(pid: pid, commandName: name, mode: mode)
+            )
+        }
+    }
+
+    @objc private func handleCLIStopped(_ notification: Notification) {
+        DispatchQueue.main.async {
+            self.stopWatchingExternalCLI()
+            self.sessionManager.setExternalCLISession(nil)
+        }
+    }
+
+    /// Pure kernel kqueue monitor (zero polling / 0% CPU) that cleans up CLI badge if CLI terminates abnormally.
+    private func watchExternalCLIPID(_ pid: Int32) {
+        stopWatchingExternalCLI()
+        guard pid > 0 else { return }
+        let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
+        source.setEventHandler { [weak self] in
+            self?.stopWatchingExternalCLI()
+            self?.sessionManager.setExternalCLISession(nil)
+        }
+        source.resume()
+        cliProcessSource = source
+    }
+
+    private func stopWatchingExternalCLI() {
+        cliProcessSource?.cancel()
+        cliProcessSource = nil
     }
 
     private func setupSignalHandlers() {
@@ -185,7 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func showPopover() {
         guard let button = statusItem.button else { return }
-        sessionManager.refreshDisplayTick()
+        sessionManager.reconcileOnWakeOrShow()
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
@@ -257,7 +357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func menuLockScreen() {
-        ScreenLocker.lockScreen()
+        ScreenLocker.lockScreenImmediate()
     }
 
     @objc private func menuToggleLaunchAtLogin() {
@@ -277,7 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: - NSPopoverDelegate (Event-driven display timer)
 
     func popoverWillShow(_ notification: Notification) {
-        sessionManager.refreshDisplayTick()
+        sessionManager.reconcileOnWakeOrShow()
         startDisplayTimer()
     }
 
@@ -313,10 +413,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         button.image = img
 
         let t = sessionManager.l10n
-        if active {
+        if sessionManager.isRunning {
             let modeTxt = t.modeTitle(sessionManager.activeMode)
             let lidTxt = closedLid ? " · \(t.backpackBadge)" : ""
             button.toolTip = "\(t.appName) — \(t.runningBadge) (\(modeTxt)\(lidTxt))"
+        } else if let cli = sessionManager.externalCLI {
+            button.toolTip = "\(t.appName) — \(t.cliGuardingBanner(cli))"
         } else {
             button.toolTip = "\(t.appName) — \(t.idleBadge)"
         }
@@ -327,6 +429,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSEvent.removeMonitor(monitor)
             keyMonitor = nil
         }
+        if let wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+            self.wakeObserver = nil
+        }
+        stopWatchingExternalCLI()
         stopDisplayTimer()
         sessionManager.stopSession(reason: .silent)
     }

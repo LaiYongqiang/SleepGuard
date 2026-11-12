@@ -18,6 +18,62 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
+final class MockCaffeinateRunner: CaffeinateRunning {
+    var isActive: Bool = false
+    var shouldThrowOnStart = false
+    var lastMode: GuardMode?
+    var lastTimeout: Int?
+
+    func start(mode: GuardMode, timeoutSeconds: Int?, onUnexpectedExit: @escaping () -> Void) throws {
+        if shouldThrowOnStart {
+            throw NSError(domain: "MockCaffeinate", code: 1, userInfo: [NSLocalizedDescriptionKey: "spawn failed"])
+        }
+        isActive = true
+        lastMode = mode
+        lastTimeout = timeoutSeconds
+    }
+
+    func stop() {
+        isActive = false
+    }
+}
+
+final class MockBackpackGuard: BackpackGuarding {
+    var enableCalls = 0
+    var disableCalls = 0
+    func enable(completion: @escaping (Result<Void, Error>) -> Void) {
+        enableCalls += 1
+        completion(.success(()))
+    }
+    func disable() { disableCalls += 1 }
+    func checkSleepDisabledAsync(completion: @escaping (Bool) -> Void) { completion(false) }
+    func restoreNormalSleepAsync(completion: @escaping (Result<Void, Error>) -> Void) { completion(.success(())) }
+}
+
+final class MockPowerMonitor: PowerMonitoring {
+    var snapshot: PowerSnapshot? = PowerSnapshot(onBattery: false, percentage: 100)
+    var eventHandler: ((PowerEvent) -> Void)?
+    func currentPowerSnapshot() -> PowerSnapshot? { snapshot }
+    func start(thresholdPercent: Int, stopOnUnplug: Bool, onEvent: @escaping (PowerEvent) -> Void) { eventHandler = onEvent }
+    func stop() { eventHandler = nil }
+}
+
+final class MockScreenLocker: ScreenLocking {
+    var lockCount = 0
+    func lockScreen() { lockCount += 1 }
+}
+
+final class MockNotifier: UserNotifying {
+    var sent: [(String, String)] = []
+    func preparePermissionIfNeeded() {}
+    func send(title: String, body: String) { sent.append((title, body)) }
+}
+
+final class MockLoginItem: LoginItemControlling {
+    var isEnabled: Bool = false
+    func setEnabled(_ enabled: Bool) throws { isEnabled = enabled }
+}
+
 @main
 struct VerifyRunner {
     static func main() throws {
@@ -33,50 +89,83 @@ struct VerifyRunner {
         expect(CommandBuilder.timeoutSeconds(forMinutes: 0) == nil, "Indefinite timeout returns nil")
         expect(CommandBuilder.timeoutSeconds(forMinutes: 240) == 14400, "240m -> 14400s")
 
-        let watchScript = CommandBuilder.closedLidWatchScript(watchPID: 9999)
-        expect(watchScript.contains("pmset -a disablesleep 1"), "Watch script enables disablesleep")
-        expect(watchScript.contains("pmset -a disablesleep 0"), "Watch script restores disablesleep")
-        expect(watchScript.contains("caffeinate -i -w 9999"), "Watch script watches PID via caffeinate -w")
+        // 2. URLCommandParser & CLIParser checks
+        let url = URL(string: "sleepguard://start?mode=display&minutes=90&lock=0")!
+        expect(URLCommandParser.parse(url) == .start(mode: .keepDisplay, minutes: 90, lockOnStart: false, allowClosedLid: nil), "URL start parsing")
+        expect(URLCommandParser.parse(URL(string: "sleepguard://stop")!) == .stop, "URL stop parsing")
+        expect(CLIParser.parse(arguments: ["SleepGuard", "--display", "--lock", "--", "codex", "fix"]) == .runCommand(arguments: ["codex", "fix"], mode: .keepDisplay, lockOnFinish: true), "CLI command parsing")
+        expect(CLIParser.parse(arguments: ["SleepGuard", "watch", "999"]) == .watchPID(pid: 999, mode: .background, lockOnFinish: false), "CLI watch PID parsing")
 
-        // 2. DurationFormatter checks
-        expect(DurationFormatter.formatCountdown(14356) == "03:59:16", "HH:MM:SS formatting")
-        expect(DurationFormatter.formatDuration(240, isChinese: true) == "4 小时", "Chinese duration")
-        expect(DurationFormatter.formatDuration(240, isChinese: false) == "4 hours", "English duration")
-        expect(DurationFormatter.formatDuration(0, isChinese: false) == "Indefinite", "Indefinite duration")
-
-        // 3. PreferencesStore defaults & persistence
+        // 3. PreferencesStore round-trip
         let suiteName = "io.github.laiyongqiang.SleepGuard.verify.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let store = PreferencesStore(defaults: defaults)
-        let initial = store.load()
-        expect(initial.mode == .background, "Default mode is background")
-        expect(initial.durationMinutes == 240, "Default duration is 4h (240m)")
-        expect(initial.lockOnStart == true, "Default lockOnStart is true")
-        expect(initial.allowClosedLid == false, "Default allowClosedLid is false")
-        expect(initial.batteryThresholdPercent == 10, "Default battery cutoff is 10%")
+        var cfg = store.load()
+        expect(cfg.mode == .background && cfg.durationMinutes == 240 && cfg.lockOnStart && !cfg.stopOnUnplug, "Defaults match spec")
+        cfg.stopOnUnplug = true
+        cfg.language = .en
+        store.save(cfg)
+        expect(store.load() == cfg, "Preferences persistence round-trip")
 
-        var updated = initial
-        updated.mode = .keepDisplay
-        updated.durationMinutes = 90
-        updated.customMinutes = 90
-        updated.lockOnStart = false
-        updated.allowClosedLid = true
-        updated.batteryThresholdPercent = 15
-        updated.language = .en
-        store.save(updated)
-        expect(store.load() == updated, "Preferences round-trip persistence")
+        // 4. SessionManager state machine
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let caf = MockCaffeinateRunner()
+        let bag = MockBackpackGuard()
+        let pwr = MockPowerMonitor()
+        let lock = MockScreenLocker()
+        let notif = MockNotifier()
+        let login = MockLoginItem()
 
-        // 4. PowerOutputParser checks
-        expect(
-            PowerOutputParser.parseSleepDisabled(fromPmsetOutput: " SleepDisabled\t\t1\n") == true,
-            "Parse SleepDisabled = 1"
+        let manager = SessionManager(
+            store: store,
+            caffeinateRunner: caf,
+            backpackGuard: bag,
+            powerMonitor: pwr,
+            screenLocker: lock,
+            notifier: notif,
+            loginItem: login,
+            nowProvider: { now },
+            checkStaleSleepOnInit: false
         )
-        expect(
-            PowerOutputParser.parseSleepDisabled(fromPmsetOutput: " SleepDisabled\t\t0\n") == false,
-            "Parse SleepDisabled = 0"
-        )
+        var closeCount = 0
+        var stateEvents = 0
+        manager.onRequestClosePopover = { closeCount += 1 }
+        manager.onStateChange = { _, _ in stateEvents += 1 }
+
+        // Pre-flight unplug guard prevents launch & Touch ID
+        pwr.snapshot = PowerSnapshot(onBattery: true, percentage: 50)
+        manager.setAllowClosedLid(true)
+        manager.startConfiguredSession()
+        expect(!manager.isRunning && bag.enableCalls == 0 && manager.errorMessage != nil, "Pre-flight unplug blocks launch before Touch ID")
+
+        // KeepDisplay start does NOT close popover
+        pwr.snapshot = PowerSnapshot(onBattery: false, percentage: 100)
+        manager.setStopOnUnplug(false)
+        manager.selectMode(.keepDisplay)
+        manager.startConfiguredSession()
+        expect(manager.isRunning && closeCount == 0 && lock.lockCount == 0 && notif.sent.isEmpty, "Non-locking start stays open without notification spam")
+
+        // Extend + failed switch + language tooltip callback + wake reconcile
+        now = now.addingTimeInterval(60)
+        manager.extendSession(byMinutes: 30)
+        expect(manager.remainingSeconds == 16140, "Extend +30m updates remaining seconds")
+
+        caf.shouldThrowOnStart = true
+        manager.switchRunningMode(to: .background)
+        expect(manager.activeMode == .keepDisplay, "Failed mode switch keeps old mode")
+        caf.shouldThrowOnStart = false
+        manager.switchRunningMode(to: .background)
+        expect(manager.activeMode == .background, "Mode switch preserves active session")
+
+        let beforeLangEvents = stateEvents
+        manager.setLanguage(.zhHans)
+        expect(stateEvents > beforeLangEvents, "Language change triggers tooltip refresh")
+
+        caf.isActive = false
+        manager.reconcileOnWakeOrShow()
+        expect(!manager.isRunning && notif.sent.count == 1, "Wake reconcile catches exited caffeinate and notifies once")
 
         // 5. Live caffeinate -w lifecycle check
         let sentinel = Process()

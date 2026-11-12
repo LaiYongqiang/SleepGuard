@@ -53,6 +53,7 @@ public struct SessionConfig: Equatable, Sendable {
     public var lockOnStart: Bool
     public var allowClosedLid: Bool
     public var batteryThresholdPercent: Int
+    public var stopOnUnplug: Bool
     public var language: AppLanguage
 
     public init(
@@ -62,6 +63,7 @@ public struct SessionConfig: Equatable, Sendable {
         lockOnStart: Bool = true,
         allowClosedLid: Bool = false,
         batteryThresholdPercent: Int = 10,
+        stopOnUnplug: Bool = false,
         language: AppLanguage = .system
     ) {
         self.mode = mode
@@ -70,6 +72,7 @@ public struct SessionConfig: Equatable, Sendable {
         self.lockOnStart = lockOnStart
         self.allowClosedLid = allowClosedLid
         self.batteryThresholdPercent = batteryThresholdPercent
+        self.stopOnUnplug = stopOnUnplug
         self.language = language
     }
 
@@ -81,6 +84,150 @@ public struct SessionConfig: Equatable, Sendable {
 
     public var effectiveLockOnStart: Bool {
         mode == .background && lockOnStart
+    }
+}
+
+public struct PowerSnapshot: Equatable, Sendable {
+    public let onBattery: Bool
+    public let percentage: Int?
+
+    public init(onBattery: Bool, percentage: Int?) {
+        self.onBattery = onBattery
+        self.percentage = percentage
+    }
+}
+
+public enum PowerEvent: Equatable, Sendable {
+    case lowBattery(Int)
+    case unplugged
+}
+
+public struct ExternalCLISession: Equatable, Sendable {
+    public let pid: Int32
+    public let commandName: String
+    public let mode: GuardMode
+
+    public init(pid: Int32, commandName: String, mode: GuardMode) {
+        self.pid = pid
+        self.commandName = commandName
+        self.mode = mode
+    }
+}
+
+public enum URLCommand: Equatable, Sendable {
+    case start(mode: GuardMode?, minutes: Double?, lockOnStart: Bool?, allowClosedLid: Bool?)
+    case stop
+    case toggle
+    case lock
+    case open
+}
+
+public enum URLCommandParser {
+    public static func parse(_ url: URL) -> URLCommand? {
+        guard url.scheme?.lowercased() == "sleepguard" else { return nil }
+        let host = (url.host ?? "").lowercased()
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+        let action = !host.isEmpty ? host : path
+
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let queryItems = components?.queryItems ?? []
+
+        func boolValue(_ key: String) -> Bool? {
+            guard let raw = queryItems.first(where: { $0.name.lowercased() == key })?.value?.lowercased() else {
+                return nil
+            }
+            if ["1", "true", "yes", "on"].contains(raw) { return true }
+            if ["0", "false", "no", "off"].contains(raw) { return false }
+            return nil
+        }
+
+        switch action {
+        case "start":
+            let modeRaw = queryItems.first(where: { $0.name.lowercased() == "mode" })?.value?.lowercased()
+            let mode: GuardMode? = {
+                switch modeRaw {
+                case "background", "bg": return .background
+                case "keepdisplay", "display", "screen": return .keepDisplay
+                default: return nil
+                }
+            }()
+            let minutes: Double? = queryItems
+                .first(where: { $0.name.lowercased() == "minutes" || $0.name.lowercased() == "duration" })
+                .flatMap { $0.value }
+                .flatMap { Double($0) }
+                .map { max(0, $0) }
+            let lock = boolValue("lock")
+            let lid = boolValue("lid")
+            return .start(mode: mode, minutes: minutes, lockOnStart: lock, allowClosedLid: lid)
+        case "stop":
+            return .stop
+        case "toggle":
+            return .toggle
+        case "lock":
+            return .lock
+        case "open", "":
+            return .open
+        default:
+            return nil
+        }
+    }
+}
+
+public enum CLICommand: Equatable, Sendable {
+    case help
+    case version
+    case gui(openPopover: Bool)
+    case watchPID(pid: Int32, mode: GuardMode, lockOnFinish: Bool)
+    case runCommand(arguments: [String], mode: GuardMode, lockOnFinish: Bool)
+}
+
+public enum CLIParser {
+    public static func parse(arguments: [String]) -> CLICommand {
+        let args = Array(arguments.dropFirst())
+        if args.contains("--version") || args.contains("-v") {
+            return .version
+        }
+        if args.contains("--help") || args.contains("-h") {
+            return .help
+        }
+
+        var mode: GuardMode = .background
+        var lockOnFinish = false
+
+        if let dashIndex = args.firstIndex(of: "--") {
+            let options = args[..<dashIndex]
+            for opt in options {
+                if opt == "--display" || opt == "-d" {
+                    mode = .keepDisplay
+                } else if opt == "--lock" || opt == "-l" {
+                    lockOnFinish = true
+                }
+            }
+            let cmdArgs = Array(args[(dashIndex + 1)...])
+            if !cmdArgs.isEmpty {
+                return .runCommand(arguments: cmdArgs, mode: mode, lockOnFinish: lockOnFinish)
+            }
+            return .help
+        }
+
+        if let watchIdx = args.firstIndex(of: "watch") {
+            var targetPID: Int32?
+            for (idx, token) in args.enumerated() where idx != watchIdx {
+                if token == "--display" || token == "-d" {
+                    mode = .keepDisplay
+                } else if token == "--lock" || token == "-l" {
+                    lockOnFinish = true
+                } else if targetPID == nil, let pid = Int32(token), pid > 0 {
+                    targetPID = pid
+                }
+            }
+            if let targetPID {
+                return .watchPID(pid: targetPID, mode: mode, lockOnFinish: lockOnFinish)
+            }
+            return .help
+        }
+
+        return .gui(openPopover: args.contains("--open"))
     }
 }
 

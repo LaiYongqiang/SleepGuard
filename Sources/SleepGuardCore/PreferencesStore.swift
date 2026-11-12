@@ -8,13 +8,20 @@ public final class PreferencesStore {
         static let lockOnStart = "sleepguard.lockOnStart"
         static let allowClosedLid = "sleepguard.allowClosedLid"
         static let batteryThreshold = "sleepguard.batteryThresholdPercent"
+        static let stopOnUnplug = "sleepguard.stopOnUnplug"
         static let language = "sleepguard.language"
+        static let hasShownOnboarding = "sleepguard.hasShownOnboarding"
     }
 
     private let defaults: UserDefaults
 
     public init(defaults: UserDefaults = UserDefaults(suiteName: "io.github.laiyongqiang.SleepGuard") ?? .standard) {
         self.defaults = defaults
+    }
+
+    public var hasShownOnboarding: Bool {
+        get { defaults.bool(forKey: Keys.hasShownOnboarding) }
+        set { defaults.set(newValue, forKey: Keys.hasShownOnboarding) }
     }
 
     public func load() -> SessionConfig {
@@ -56,6 +63,13 @@ public final class PreferencesStore {
             batteryThreshold = 10
         }
 
+        let stopOnUnplug: Bool
+        if defaults.object(forKey: Keys.stopOnUnplug) != nil {
+            stopOnUnplug = defaults.bool(forKey: Keys.stopOnUnplug)
+        } else {
+            stopOnUnplug = false
+        }
+
         let langRaw = defaults.string(forKey: Keys.language) ?? AppLanguage.system.rawValue
         let language = AppLanguage(rawValue: langRaw) ?? .system
 
@@ -66,6 +80,7 @@ public final class PreferencesStore {
             lockOnStart: lockOnStart,
             allowClosedLid: allowClosedLid,
             batteryThresholdPercent: batteryThreshold,
+            stopOnUnplug: stopOnUnplug,
             language: language
         )
     }
@@ -77,6 +92,7 @@ public final class PreferencesStore {
         defaults.set(config.lockOnStart, forKey: Keys.lockOnStart)
         defaults.set(config.allowClosedLid, forKey: Keys.allowClosedLid)
         defaults.set(config.batteryThresholdPercent, forKey: Keys.batteryThreshold)
+        defaults.set(config.stopOnUnplug, forKey: Keys.stopOnUnplug)
         defaults.set(config.language.rawValue, forKey: Keys.language)
     }
 }

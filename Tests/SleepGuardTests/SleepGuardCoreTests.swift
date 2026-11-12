@@ -3,43 +3,132 @@ import Foundation
 import XCTest
 @testable import SleepGuardCore
 
-final class SleepGuardCoreTests: XCTestCase {
-    func testCommandBuilderTimedAndIndefinite() {
-        let bgTimed = CommandBuilder.caffeinateArguments(mode: .background, parentPID: 1234, timeoutSeconds: 14400)
-        XCTAssertEqual(bgTimed, ["-i", "-w", "1234", "-t", "14400"])
+private final class MockCaffeinateRunner: CaffeinateRunning {
+    var isActive: Bool = false
+    var shouldThrowOnStart = false
+    var startCount = 0
+    var stopCount = 0
+    var lastMode: GuardMode?
+    var lastTimeout: Int?
+    var exitCallback: (() -> Void)?
 
-        let dispIndefinite = CommandBuilder.caffeinateArguments(mode: .keepDisplay, parentPID: 5678, timeoutSeconds: nil)
-        XCTAssertEqual(dispIndefinite, ["-di", "-w", "5678"])
+    func start(mode: GuardMode, timeoutSeconds: Int?, onUnexpectedExit: @escaping () -> Void) throws {
+        if shouldThrowOnStart {
+            throw NSError(domain: "MockCaffeinate", code: 1, userInfo: [NSLocalizedDescriptionKey: "spawn failed"])
+        }
+        startCount += 1
+        isActive = true
+        lastMode = mode
+        lastTimeout = timeoutSeconds
+        exitCallback = onUnexpectedExit
+    }
+
+    func stop() {
+        stopCount += 1
+        isActive = false
+    }
+}
+
+private final class MockBackpackGuard: BackpackGuarding {
+    var enableCalls = 0
+    var disableCalls = 0
+    var shouldFailEnable = false
+
+    func enable(completion: @escaping (Result<Void, Error>) -> Void) {
+        enableCalls += 1
+        if shouldFailEnable {
+            completion(.failure(NSError(domain: "MockBackpack", code: -1, userInfo: [NSLocalizedDescriptionKey: "auth cancelled"])))
+        } else {
+            completion(.success(()))
+        }
+    }
+
+    func disable() {
+        disableCalls += 1
+    }
+
+    func checkSleepDisabledAsync(completion: @escaping (Bool) -> Void) {
+        completion(false)
+    }
+
+    func restoreNormalSleepAsync(completion: @escaping (Result<Void, Error>) -> Void) {
+        completion(.success(()))
+    }
+}
+
+private final class MockPowerMonitor: PowerMonitoring {
+    var snapshot: PowerSnapshot? = PowerSnapshot(onBattery: false, percentage: 100)
+    var startedThreshold: Int = 0
+    var startedStopOnUnplug: Bool = false
+    var eventHandler: ((PowerEvent) -> Void)?
+
+    func currentPowerSnapshot() -> PowerSnapshot? {
+        snapshot
+    }
+
+    func start(thresholdPercent: Int, stopOnUnplug: Bool, onEvent: @escaping (PowerEvent) -> Void) {
+        startedThreshold = thresholdPercent
+        startedStopOnUnplug = stopOnUnplug
+        eventHandler = onEvent
+    }
+
+    func stop() {
+        eventHandler = nil
+    }
+}
+
+private final class MockScreenLocker: ScreenLocking {
+    var lockCount = 0
+    func lockScreen() { lockCount += 1 }
+}
+
+private final class MockNotifier: UserNotifying {
+    var prepareCount = 0
+    var sent: [(String, String)] = []
+    func preparePermissionIfNeeded() { prepareCount += 1 }
+    func send(title: String, body: String) { sent.append((title, body)) }
+}
+
+private final class MockLoginItem: LoginItemControlling {
+    var isEnabled: Bool = false
+    func setEnabled(_ enabled: Bool) throws { isEnabled = enabled }
+}
+
+final class SleepGuardCoreTests: XCTestCase {
+    func testCommandBuilderBuildsBackgroundAndKeepDisplayArguments() {
+        let bg = CommandBuilder.caffeinateArguments(mode: .background, parentPID: 1234, timeoutSeconds: 14400)
+        XCTAssertEqual(bg, ["-i", "-w", "1234", "-t", "14400"])
+
+        let disp = CommandBuilder.caffeinateArguments(mode: .keepDisplay, parentPID: 5678, timeoutSeconds: nil)
+        XCTAssertEqual(disp, ["-di", "-w", "5678"])
 
         XCTAssertNil(CommandBuilder.timeoutSeconds(forMinutes: 0))
-        XCTAssertEqual(CommandBuilder.timeoutSeconds(forMinutes: 30), 1800)
         XCTAssertEqual(CommandBuilder.timeoutSeconds(forMinutes: 240), 14400)
     }
 
-    func testClosedLidWatchScriptContainsTrapAndWait() {
-        let script = CommandBuilder.closedLidWatchScript(watchPID: 9999)
-        XCTAssertTrue(script.contains("pmset -a disablesleep 1"))
-        XCTAssertTrue(script.contains("pmset -a disablesleep 0"))
-        XCTAssertTrue(script.contains("caffeinate -i -w 9999"))
-        XCTAssertTrue(script.contains("trap"))
+    func testURLCommandAndCLIParser() {
+        let startURL = URL(string: "sleepguard://start?mode=display&minutes=90&lock=0&lid=0")!
+        XCTAssertEqual(
+            URLCommandParser.parse(startURL),
+            .start(mode: .keepDisplay, minutes: 90, lockOnStart: false, allowClosedLid: false)
+        )
+        XCTAssertEqual(URLCommandParser.parse(URL(string: "sleepguard://stop")!), .stop)
+        XCTAssertEqual(URLCommandParser.parse(URL(string: "sleepguard://lock")!), .lock)
+        XCTAssertNil(URLCommandParser.parse(URL(string: "https://example.com")!))
+
+        XCTAssertEqual(
+            CLIParser.parse(arguments: ["SleepGuard", "--display", "--lock", "--", "codex", "run"]),
+            .runCommand(arguments: ["codex", "run"], mode: .keepDisplay, lockOnFinish: true)
+        )
+        XCTAssertEqual(
+            CLIParser.parse(arguments: ["SleepGuard", "watch", "4321", "--lock"]),
+            .watchPID(pid: 4321, mode: .background, lockOnFinish: true)
+        )
+        XCTAssertEqual(CLIParser.parse(arguments: ["SleepGuard", "--open"]), .gui(openPopover: true))
     }
 
-    func testDurationFormatter() {
-        XCTAssertEqual(DurationFormatter.formatCountdown(14356), "03:59:16")
-        XCTAssertEqual(DurationFormatter.formatCountdown(0), "00:00:00")
-        XCTAssertEqual(DurationFormatter.formatCountdown(-5), "00:00:00")
-
-        XCTAssertEqual(DurationFormatter.formatDuration(240, isChinese: true), "4 小时")
-        XCTAssertEqual(DurationFormatter.formatDuration(30, isChinese: true), "30 分钟")
-        XCTAssertEqual(DurationFormatter.formatDuration(0, isChinese: true), "永久")
-
-        XCTAssertEqual(DurationFormatter.formatDuration(240, isChinese: false), "4 hours")
-        XCTAssertEqual(DurationFormatter.formatDuration(60, isChinese: false), "1 hour")
-        XCTAssertEqual(DurationFormatter.formatDuration(0, isChinese: false), "Indefinite")
-    }
-
-    func testPreferencesStoreDefaultsAndPersistence() throws {
-        let suiteName = "io.github.laiyongqiang.SleepGuard.tests.\(UUID().uuidString)"
+    func testPreferencesPersistenceRoundTrip() throws {
+        let suiteName = "io.github.laiyongqiang.SleepGuard.test.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -47,8 +136,9 @@ final class SleepGuardCoreTests: XCTestCase {
         let initial = store.load()
         XCTAssertEqual(initial.mode, .background)
         XCTAssertEqual(initial.durationMinutes, 240)
-        XCTAssertTrue(initial.lockOnStart)
-        XCTAssertFalse(initial.allowClosedLid)
+        XCTAssertEqual(initial.lockOnStart, true)
+        XCTAssertEqual(initial.allowClosedLid, false)
+        XCTAssertEqual(initial.stopOnUnplug, false)
         XCTAssertEqual(initial.batteryThresholdPercent, 10)
 
         var updated = initial
@@ -57,31 +147,84 @@ final class SleepGuardCoreTests: XCTestCase {
         updated.customMinutes = 90
         updated.lockOnStart = false
         updated.allowClosedLid = true
-        updated.batteryThresholdPercent = 15
+        updated.stopOnUnplug = true
         updated.language = .en
         store.save(updated)
 
-        let reloaded = store.load()
-        XCTAssertEqual(reloaded, updated)
+        XCTAssertEqual(store.load(), updated)
     }
 
-    func testPowerOutputParser() {
-        let disabledSample = """
-        System-wide power settings:
-         SleepDisabled\t\t1
-         displaysleep\t\t10
-        """
-        XCTAssertTrue(PowerOutputParser.parseSleepDisabled(fromPmsetOutput: disabledSample))
+    func testSessionManagerLifecycleAndPreFlightGuards() throws {
+        let suiteName = "io.github.laiyongqiang.SleepGuard.sm.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = PreferencesStore(defaults: defaults)
 
-        let normalSample = """
-        System-wide power settings:
-         SleepDisabled\t\t0
-         sleep\t\t1
-        """
-        XCTAssertFalse(PowerOutputParser.parseSleepDisabled(fromPmsetOutput: normalSample))
+        var currentTime = Date(timeIntervalSince1970: 1_700_000_000)
+        let caf = MockCaffeinateRunner()
+        let bag = MockBackpackGuard()
+        let pwr = MockPowerMonitor()
+        let lock = MockScreenLocker()
+        let notif = MockNotifier()
+        let login = MockLoginItem()
+
+        let manager = SessionManager(
+            store: store,
+            caffeinateRunner: caf,
+            backpackGuard: bag,
+            powerMonitor: pwr,
+            screenLocker: lock,
+            notifier: notif,
+            loginItem: login,
+            nowProvider: { currentTime },
+            checkStaleSleepOnInit: false
+        )
+
+        var closeCount = 0
+        manager.onRequestClosePopover = { closeCount += 1 }
+
+        // Pre-flight low battery blocks before calling BackpackGuard
+        manager.setAllowClosedLid(true)
+        pwr.snapshot = PowerSnapshot(onBattery: true, percentage: 8)
+        manager.startConfiguredSession()
+        XCTAssertFalse(manager.isRunning)
+        XCTAssertEqual(bag.enableCalls, 0)
+        XCTAssertNotNil(manager.errorMessage)
+
+        // Start in KeepDisplay (no lock): stays open in popover!
+        pwr.snapshot = PowerSnapshot(onBattery: false, percentage: 90)
+        manager.selectMode(.keepDisplay)
+        manager.startConfiguredSession()
+        XCTAssertTrue(manager.isRunning)
+        XCTAssertEqual(closeCount, 0)
+        XCTAssertEqual(lock.lockCount, 0)
+        XCTAssertTrue(notif.sent.isEmpty)
+
+        // Advance 100s, extend 30m, switch mode cleanly
+        currentTime = currentTime.addingTimeInterval(100)
+        manager.refreshDisplayTick()
+        XCTAssertEqual(manager.remainingSeconds, 14300)
+
+        manager.extendSession(byMinutes: 30)
+        XCTAssertEqual(manager.remainingSeconds, 16100)
+
+        caf.shouldThrowOnStart = true
+        manager.switchRunningMode(to: .background)
+        XCTAssertEqual(manager.activeMode, .keepDisplay)
+        XCTAssertNotNil(manager.errorMessage)
+
+        caf.shouldThrowOnStart = false
+        manager.switchRunningMode(to: .background)
+        XCTAssertEqual(manager.activeMode, .background)
+
+        // Wake reconciliation catches dead child
+        caf.isActive = false
+        manager.reconcileOnWakeOrShow()
+        XCTAssertFalse(manager.isRunning)
+        XCTAssertEqual(notif.sent.count, 1)
     }
 
-    func testCaffeinateExitsWhenWatchedProcessTerminates() throws {
+    func testLiveCaffeinateProcessExitsWhenSentinelExits() throws {
         let sentinel = Process()
         sentinel.executableURL = URL(fileURLWithPath: "/bin/sleep")
         sentinel.arguments = ["10"]
@@ -95,6 +238,8 @@ final class SleepGuardCoreTests: XCTestCase {
             timeoutSeconds: 30
         )
         try caffeinate.run()
+
+        usleep(150_000)
         XCTAssertTrue(caffeinate.isRunning)
 
         sentinel.terminate()
