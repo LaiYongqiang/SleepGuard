@@ -18,6 +18,11 @@ jobs:
       - name: Run unit and lifecycle tests
         run: swift test
 
+      - name: Run verification suite
+        run: |
+          chmod +x scripts/verify.sh
+          ./scripts/verify.sh
+
       - name: Build release bundle, ZIP, and DMG
         env:
           VERSION: ${{ github.ref_name }}
@@ -35,5 +40,29 @@ jobs:
             dist/*.dmg \
             dist/*.zip \
             dist/SHA256SUMS.txt \
-            --title "SleepGuard ${{ github.ref_name }}" \
+            --title "SleepSkip ${{ github.ref_name }}" \
             --generate-notes
+
+      # Without this, `brew upgrade` would stay pinned to the previous release forever.
+      # Requires a TAP_TOKEN secret with write access to LaiYongqiang/homebrew-tap;
+      # the step is skipped (not failed) when the secret is absent.
+      - name: Sync Homebrew tap
+        if: ${{ env.TAP_TOKEN != '' }}
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          CLEAN_VERSION="${GITHUB_REF_NAME#v}"
+          SHA=$(shasum -a 256 dist/*.dmg | awk '{print $1}')
+          TAP_DIR=$(mktemp -d)
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/LaiYongqiang/homebrew-tap.git" "$TAP_DIR"
+          mkdir -p "$TAP_DIR/Casks"
+          sed -e "s/^  version \".*\"/  version \"${CLEAN_VERSION}\"/" \
+              -e "s/^  sha256 \".*\"/  sha256 \"${SHA}\"/" \
+              Packaging/Homebrew/sleepskip.rb > "$TAP_DIR/Casks/sleepskip.rb"
+          git -C "$TAP_DIR" rm -q --ignore-unmatch Casks/sleepguard.rb
+          git -C "$TAP_DIR" add Casks/sleepskip.rb
+          git -C "$TAP_DIR" -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -m "sleepskip ${CLEAN_VERSION}"
+          git -C "$TAP_DIR" push

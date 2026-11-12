@@ -1,8 +1,8 @@
 import Cocoa
-import SleepGuardCore
+import SleepSkipCore
 import SwiftUI
 
-struct SleepGuardPopoverView: View {
+struct SleepSkipPopoverView: View {
     @ObservedObject var manager: SessionManager
 
     private var t: L10n { manager.l10n }
@@ -38,14 +38,22 @@ struct SleepGuardPopoverView: View {
 
     private var headerBar: some View {
         HStack(spacing: 8) {
-            Image(systemName: manager.isEffectivelyActive ? "cup.and.saucer.fill" : "cup.and.saucer")
+            Image(systemName: manager.isEffectivelyActive ? "moon.zzz.fill" : "moon")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(manager.isEffectivelyActive ? .accentColor : .primary)
 
             Text(t.appName)
                 .font(.system(size: 14, weight: .semibold))
 
-            if manager.isRunning {
+            if manager.isFollowingAgents {
+                // Auto-follow reads as a different thing from a session the user started.
+                Text(t.autoFollowBadge)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.blue.opacity(0.14)))
+            } else if manager.isRunning {
                 Text(manager.activeClosedLid ? t.backpackBadge : t.runningBadge)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.green)
@@ -363,9 +371,17 @@ struct SleepGuardPopoverView: View {
 
                 let modeSummary = t.modeTitle(manager.activeMode)
                 let lidPart = manager.activeClosedLid ? " · \(t.backpackBadge)" : ""
-                Text("\(modeSummary)\(lidPart)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.secondary)
+                if manager.isFollowingAgents {
+                    Text("\(t.autoFollowBadge) · \(t.autoFollowAgentsLabel(manager.followingAgents))")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.blue)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    Text("\(modeSummary)\(lidPart)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
 
                 if let endDate = manager.endDate, !manager.isIndefinite {
                     Text(t.projectedEndLabel(DurationFormatter.formatClockTime(endDate)))
@@ -425,13 +441,19 @@ struct SleepGuardPopoverView: View {
             }
 
             Button(action: {
-                manager.stopSession(reason: .manual)
+                if manager.isFollowingAgents {
+                    // Stopping an automatic session also turns auto-follow off, so the Mac cannot
+                    // silently wake itself again moments later.
+                    manager.setAutoFollowEnabled(false)
+                } else {
+                    manager.stopSession(reason: .manual)
+                }
             }) {
                 HStack(spacing: 6) {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color.red)
                         .frame(width: 9, height: 9)
-                    Text(t.stopButton)
+                    Text(manager.isFollowingAgents ? t.autoFollowStopButton : t.stopButton)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.red)
                 }
@@ -542,6 +564,10 @@ struct SleepGuardPopoverView: View {
 
                 Divider()
 
+                autoFollowSection
+
+                Divider()
+
                 HStack {
                     Text(t.languageLabel)
                         .font(.system(size: 12))
@@ -575,8 +601,8 @@ struct SleepGuardPopoverView: View {
             }
 
             HStack {
-                Button("v1.1.0 · GitHub") {
-                    if let url = URL(string: "https://github.com/LaiYongqiang/SleepGuard") {
+                Button("v\(AppInfo.version) · GitHub") {
+                    if let url = URL(string: AppInfo.repositoryURL) {
                         NSWorkspace.shared.open(url)
                     }
                 }
@@ -602,6 +628,44 @@ struct SleepGuardPopoverView: View {
     }
 
     // MARK: - Components
+
+    /// Opt-in toggle plus the transparency copy that makes "we watch your agent's folder"
+    /// acceptable: what it does, how, the privacy boundary, and the exact path watched.
+    @ViewBuilder
+    private var autoFollowSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(t.autoFollowLabel)
+                    .font(.system(size: 12))
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { manager.config.autoFollowAgents },
+                    set: { manager.setAutoFollowEnabled($0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(SwitchToggleStyle())
+                .controlSize(.small)
+            }
+
+            if manager.config.autoFollowAgents {
+                Text(t.autoFollowDetail)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if manager.autoFollowLimitReached {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .font(.system(size: 10))
+                            .foregroundColor(.orange)
+                        Text(t.autoFollowLimitNotice)
+                            .font(.system(size: 10))
+                            .foregroundColor(.orange)
+                    }
+                }
+            }
+        }
+    }
 
     @ViewBuilder
     private func modeRow(

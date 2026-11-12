@@ -1,4 +1,4 @@
-# SleepGuard Product Requirements Document (PRD)
+# SleepSkip Product Requirements Document (PRD)
 
 > **Positioning**: An ultra-lightweight native macOS menu bar utility built for Vibe Coding and AI Agent workflows.  
 > **Core Philosophy**: Give every watt of battery power to your active AI Agents and background tasks, not an idle illuminated display.
@@ -37,7 +37,7 @@ Modern macOS developers frequently run long-lived engineering and AI workflows (
 
 ### 2.3 Duration Presets & Configuration Memory
 
-- **6 Duration Presets**: `30m`, `1h`, `2h`, `4h` (default safety cap), `Indefinite`, and inline `Custom`.
+- **5 Duration Presets + Custom**: `30m`, `1h`, `2h`, `4h` (default safety cap), `Indefinite`, plus an inline `Custom` field clamped to 7 days.
 - **Remember Last Config + Enter to Launch**: Automatically persists mode, lock-on-start, closed-lid preference, and duration. Pressing `Enter` when idle starts immediately with the remembered configuration; pressing `Enter` or `Esc` while running closes the popover without interrupting the active session.
 
 ---
@@ -51,10 +51,44 @@ Modern macOS developers frequently run long-lived engineering and AI workflows (
 
 ---
 
+## 3.1 Auto-Follow for AI Agents (opt-in, default off)
+
+Instead of asking the user to remember to start and stop a session, SleepSkip can hold the assertion exactly while a coding agent is working.
+
+- **Signal**: FSEvents on the agents' transcript directories (`~/.claude/projects`, `~/.codex/sessions`). Only the fact that a `.jsonl` file changed is observed — contents are never read, parsed, or transmitted.
+- **No polling**: the monitor is a kernel event stream. Measured cost: ~0.2 ms of CPU over 20 seconds while watching a live session directory, with zero forced wakeups. Process polling at 1 Hz was measured at ~160 ms/30 s plus one wakeup per second and was rejected.
+- **Timing rules**: a write keeps the agent active for 30 s; then a 5-minute grace period covers long tool calls that produce no output; then the assertion is released.
+- **Hard ceiling**: one automatic session cannot exceed 2 hours. On hitting it, SleepSkip releases and notifies, so a chatty background process can never pin the Mac awake all night.
+- **Precedence**: a manual session always wins. Auto-follow never overrides it, never switches to Keep Display, and never enables lid-closed backpack mode — those stay explicit user actions.
+- **Stopping**: pressing Stop during an automatic session also turns auto-follow off, so the Mac cannot silently wake itself again moments later.
+
+---
+
+## 3.2 CLI Signal Semantics
+
+`sleepskip -- <command>` spawns the command as a direct child and runs `caffeinate -w <childPID>` alongside it as a passive observer. This matters because `caffeinate` does not forward signals:
+
+- `Ctrl+C` reaches the command itself (the wrapper forwards `SIGINT`/`SIGTERM` to the child), so an agent run can always be interrupted.
+- The command's exit status is propagated unchanged; a death by signal is reported as `128 + signal`, matching shell convention.
+- Arguments after `--` are passed through untouched, including `--version` and `--help`, which would otherwise be intercepted by SleepSkip's own flag parsing.
+
+---
+
+## 3.3 Duration Input Validation
+
+User-supplied durations are sanitized at every entry point:
+
+- Non-finite values (`inf`, `NaN`, `1e999`) are rejected rather than converted, since `Int(_:)` traps on infinity.
+- Finite but excessive values are clamped to a 7-day ceiling.
+- Values loaded from `UserDefaults` are sanitized on read, so a previously poisoned preference cannot crash the app on launch.
+- URL parameters (`sleepskip://start?minutes=…`) go through the same validation.
+
+---
+
 ## 4. Architectural Red Lines
 
 1. **No background polling or 1Hz menu bar redraws** when the popover is hidden.
 2. **No silent or unguarded system power modifications**: `disablesleep` is strictly opt-in, Touch ID authorized, and self-healing via `kqueue` + `trap`.
 3. **No synthetic mouse/keyboard jiggling** to bypass OS lock screen security policies.
-4. **No `killall caffeinate`**: process management applies strictly to child handles spawned by SleepGuard.
+4. **No `killall caffeinate`**: process management applies strictly to child handles spawned by SleepSkip.
 5. **No heavy runtimes**: zero Electron, WebView, telemetry, or persistent helper daemons.

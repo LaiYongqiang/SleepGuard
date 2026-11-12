@@ -16,6 +16,13 @@ jobs:
       - name: Run unit and lifecycle tests
         run: swift test
 
+      # XCTest is unavailable with Command Line Tools only, where `swift test` reports
+      # "0 tests" and exits 0. verify.sh is the entry point that actually asserts behaviour.
+      - name: Run verification suite
+        run: |
+          chmod +x scripts/verify.sh
+          ./scripts/verify.sh
+
       - name: Build release .app bundle and DMG
         run: |
           chmod +x scripts/build_app.sh
@@ -24,7 +31,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SleepGuard-macOS
+          name: SleepSkip-macOS
           path: |
             dist/*.zip
             dist/*.dmg

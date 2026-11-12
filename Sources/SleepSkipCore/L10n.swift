@@ -7,7 +7,7 @@ public struct L10n {
         self.isZh = language.resolvedIsChinese(preferredLanguages: preferredLanguages)
     }
 
-    public var appName: String { isZh ? "防休眠助手" : "SleepGuard" }
+    public var appName: String { isZh ? "惜眠" : "SleepSkip" }
     public var idleBadge: String { isZh ? "待机" : "Idle" }
     public var runningBadge: String { isZh ? "运行中" : "Active" }
     public var backpackBadge: String { isZh ? "背包运行中" : "Backpack" }
@@ -99,6 +99,13 @@ public struct L10n {
             : "Currently on battery while Stop on Unplug is enabled"
     }
 
+    public func invalidDurationError(_ maxMinutes: Double) -> String {
+        let maxDays = Int(maxMinutes / 60 / 24)
+        return isZh
+            ? "请输入 1 到 \(maxDays) 天之间的有效时长"
+            : "Enter a valid duration between 1 minute and \(maxDays) days"
+    }
+
     // Settings
     public var settingsTitle: String { isZh ? "偏好设置与规范" : "Preferences & Specs" }
     public var backButton: String { isZh ? "返回" : "Done" }
@@ -111,8 +118,8 @@ public struct L10n {
     public var engineInfoTitle: String { isZh ? "底层引擎与 CLI 伴侣" : "Engine & CLI Companion" }
     public var engineInfoDetail: String {
         isZh
-            ? "基于 macOS 原生 caffeinate -w <PID>，收起面板零定时器（0% CPU）。支持 sleepguard:// URL 与 CLI 守护：sleepguard -- codex。"
-            : "Native caffeinate -w <PID>, zero timers when closed (0% CPU). Supports sleepguard:// URLs & CLI guard: sleepguard -- codex."
+            ? "基于 macOS 原生 caffeinate -w <PID>，收起面板零定时器（0% CPU）。支持 sleepskip:// URL 与 CLI 守护：sleepskip -- codex。"
+            : "Native caffeinate -w <PID>, zero timers when closed (0% CPU). Supports sleepskip:// URLs & CLI guard: sleepskip -- codex."
     }
 
     // Menu bar context menu
@@ -121,18 +128,51 @@ public struct L10n {
     public var menuStop: String { isZh ? "停止保持唤醒" : "Stop Keeping Awake" }
 
     // Notifications (delivered only on asynchronous background transitions)
-    public var notifStoppedTitle: String { isZh ? "防休眠已自动停止" : "SleepGuard Stopped" }
+    public var notifStoppedTitle: String { isZh ? "防休眠已自动停止" : "SleepSkip Stopped" }
     public var notifExpiredBody: String { isZh ? "预设时长已到期，系统已恢复正常休眠" : "Timer expired; normal sleep restored" }
     public var notifLowBatteryTitle: String { isZh ? "低电量自动保护" : "Low Battery Cutoff" }
     public func notifLowBatteryBody(_ pct: Int) -> String {
         isZh
             ? "电池电量已降至 \(pct)%，已自动停止防休眠并恢复系统休眠"
-            : "Battery reached \(pct)%; SleepGuard stopped to protect battery"
+            : "Battery reached \(pct)%; SleepSkip stopped to protect battery"
     }
     public var notifUnpluggedTitle: String { isZh ? "电源已断开" : "Power Disconnected" }
     public var notifUnpluggedBody: String {
         isZh
             ? "检测到切换至电池供电，已自动停止防休眠"
-            : "Switched to battery power; SleepGuard stopped automatically"
+            : "Switched to battery power; SleepSkip stopped automatically"
+    }
+
+    // Auto-follow
+    public var autoFollowLabel: String { isZh ? "自动跟随 AI Agent" : "Follow AI Agents" }
+    public var autoFollowDetail: String {
+        isZh
+            ? "检测到 Claude Code / Codex 在写会话文件时自动保持唤醒，停止后自动释放。只监听文件是否变化，不读取内容，不上传任何数据。"
+            : "Hold sleep off while Claude Code / Codex write to their session files, then release. Only file changes are observed — contents are never read or uploaded."
+    }
+    public var autoFollowWatching: String { isZh ? "监听目录" : "Watching" }
+    public var autoFollowUnavailable: String {
+        isZh ? "未检测到支持的 Agent 目录" : "No supported agent directory found"
+    }
+    public var autoFollowBadge: String { isZh ? "跟随中" : "Following" }
+    public func autoFollowAgentsLabel(_ agents: [String]) -> String {
+        let names = agents.map { name in
+            switch name {
+            case "claude-code": return "Claude Code"
+            case "codex": return "Codex"
+            default: return name
+            }
+        }
+        return names.joined(separator: " · ")
+    }
+    public var autoFollowStopButton: String { isZh ? "停止跟随" : "Stop Following" }
+    public var autoFollowLimitNotice: String {
+        isZh ? "已达单次自动会话上限，已恢复休眠" : "Auto-follow hit its session limit; sleep restored"
+    }
+    public var notifAutoFollowLimitTitle: String { isZh ? "自动跟随已到上限" : "Auto-Follow Limit Reached" }
+    public var notifAutoFollowLimitBody: String {
+        isZh
+            ? "自动跟随已连续运行 2 小时，已自动释放唤醒断言"
+            : "Auto-follow ran for 2 hours; the wake assertion was released"
     }
 }

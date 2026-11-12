@@ -2,28 +2,28 @@
 import PackageDescription
 
 let package = Package(
-    name: "SleepGuard",
+    name: "SleepSkip",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .library(name: "SleepGuardCore", targets: ["SleepGuardCore"]),
-        .executable(name: "SleepGuard", targets: ["SleepGuard"])
+        .library(name: "SleepSkipCore", targets: ["SleepSkipCore"]),
+        .executable(name: "SleepSkip", targets: ["SleepSkip"])
     ],
     targets: [
         .target(
-            name: "SleepGuardCore",
-            path: "Sources/SleepGuardCore"
+            name: "SleepSkipCore",
+            path: "Sources/SleepSkipCore"
         ),
         .executableTarget(
-            name: "SleepGuard",
-            dependencies: ["SleepGuardCore"],
-            path: "Sources/SleepGuard"
+            name: "SleepSkip",
+            dependencies: ["SleepSkipCore"],
+            path: "Sources/SleepSkip"
         ),
         .testTarget(
-            name: "SleepGuardTests",
-            dependencies: ["SleepGuardCore"],
-            path: "Tests/SleepGuardTests"
+            name: "SleepSkipTests",
+            dependencies: ["SleepSkipCore"],
+            path: "Tests/SleepSkipTests"
         )
     ]
 )

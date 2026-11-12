@@ -5,31 +5,31 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>SleepGuard</string>
+    <string>SleepSkip</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>io.github.laiyongqiang.SleepGuard</string>
+    <string>io.github.laiyongqiang.SleepSkip</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>SleepGuard</string>
+    <string>SleepSkip</string>
     <key>CFBundleDisplayName</key>
-    <string>SleepGuard</string>
+    <string>SleepSkip</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.1.0</string>
+    <string>1.2.0</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>3</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
             <key>CFBundleURLName</key>
-            <string>io.github.laiyongqiang.SleepGuard</string>
+            <string>io.github.laiyongqiang.SleepSkip</string>
             <key>CFBundleURLSchemes</key>
             <array>
-                <string>sleepguard</string>
+                <string>sleepskip</string>
             </array>
         </dict>
     </array>

@@ -1,7 +1,7 @@
 #if canImport(XCTest)
 import Foundation
 import XCTest
-@testable import SleepGuardCore
+@testable import SleepSkipCore
 
 private final class MockCaffeinateRunner: CaffeinateRunning {
     var isActive: Bool = false
@@ -94,7 +94,7 @@ private final class MockLoginItem: LoginItemControlling {
     func setEnabled(_ enabled: Bool) throws { isEnabled = enabled }
 }
 
-final class SleepGuardCoreTests: XCTestCase {
+final class SleepSkipCoreTests: XCTestCase {
     func testCommandBuilderBuildsBackgroundAndKeepDisplayArguments() {
         let bg = CommandBuilder.caffeinateArguments(mode: .background, parentPID: 1234, timeoutSeconds: 14400)
         XCTAssertEqual(bg, ["-i", "-w", "1234", "-t", "14400"])
@@ -107,28 +107,94 @@ final class SleepGuardCoreTests: XCTestCase {
     }
 
     func testURLCommandAndCLIParser() {
-        let startURL = URL(string: "sleepguard://start?mode=display&minutes=90&lock=0&lid=0")!
+        let startURL = URL(string: "sleepskip://start?mode=display&minutes=90&lock=0&lid=0")!
         XCTAssertEqual(
             URLCommandParser.parse(startURL),
             .start(mode: .keepDisplay, minutes: 90, lockOnStart: false, allowClosedLid: false)
         )
-        XCTAssertEqual(URLCommandParser.parse(URL(string: "sleepguard://stop")!), .stop)
-        XCTAssertEqual(URLCommandParser.parse(URL(string: "sleepguard://lock")!), .lock)
+        XCTAssertEqual(URLCommandParser.parse(URL(string: "sleepskip://stop")!), .stop)
+        XCTAssertEqual(URLCommandParser.parse(URL(string: "sleepskip://lock")!), .lock)
         XCTAssertNil(URLCommandParser.parse(URL(string: "https://example.com")!))
 
         XCTAssertEqual(
-            CLIParser.parse(arguments: ["SleepGuard", "--display", "--lock", "--", "codex", "run"]),
+            CLIParser.parse(arguments: ["SleepSkip", "--display", "--lock", "--", "codex", "run"]),
             .runCommand(arguments: ["codex", "run"], mode: .keepDisplay, lockOnFinish: true)
         )
         XCTAssertEqual(
-            CLIParser.parse(arguments: ["SleepGuard", "watch", "4321", "--lock"]),
+            CLIParser.parse(arguments: ["SleepSkip", "watch", "4321", "--lock"]),
             .watchPID(pid: 4321, mode: .background, lockOnFinish: true)
         )
-        XCTAssertEqual(CLIParser.parse(arguments: ["SleepGuard", "--open"]), .gui(openPopover: true))
+        XCTAssertEqual(CLIParser.parse(arguments: ["SleepSkip", "--open"]), .gui(openPopover: true))
+    }
+
+    func testCLIParserDoesNotHijackPassthroughArguments() {
+        // Regression: `--version` / `--help` after `--` belong to the wrapped command.
+        XCTAssertEqual(
+            CLIParser.parse(arguments: ["SleepSkip", "--", "codex", "--version"]),
+            .runCommand(arguments: ["codex", "--version"], mode: .background, lockOnFinish: false)
+        )
+        XCTAssertEqual(
+            CLIParser.parse(arguments: ["SleepSkip", "--", "npm", "-v"]),
+            .runCommand(arguments: ["npm", "-v"], mode: .background, lockOnFinish: false)
+        )
+        XCTAssertEqual(
+            CLIParser.parse(arguments: ["SleepSkip", "--", "claude", "--help"]),
+            .runCommand(arguments: ["claude", "--help"], mode: .background, lockOnFinish: false)
+        )
+        // Options before `--` still work, and `--version` alone still reports the version.
+        XCTAssertEqual(CLIParser.parse(arguments: ["SleepSkip", "--version"]), .version)
+        XCTAssertEqual(CLIParser.parse(arguments: ["SleepSkip", "--help"]), .help)
+        XCTAssertEqual(CLIParser.parse(arguments: ["SleepSkip", "--"]), .help)
+    }
+
+    func testNonFiniteDurationsAreRejected() {
+        // Regression: Double("inf") used to trap in Int(_:) and poison persisted config.
+        for raw in ["inf", "Infinity", "-inf", "1e999", "nan"] {
+            guard let value = Double(raw) else { continue }
+            XCTAssertNil(
+                CommandBuilder.timeoutSeconds(forMinutes: value),
+                "\(raw) must not produce a timeout"
+            )
+        }
+        // Finite overflow is clamped to the maximum instead of trapping.
+        XCTAssertEqual(
+            CommandBuilder.timeoutSeconds(forMinutes: 1e300),
+            CommandBuilder.timeoutSeconds(forMinutes: CommandBuilder.maxDurationMinutes)
+        )
+        XCTAssertNil(CommandBuilder.sanitizeMinutes(.infinity))
+        XCTAssertNil(CommandBuilder.sanitizeMinutes(.nan))
+        XCTAssertNil(CommandBuilder.sanitizeMinutes(-5))
+        XCTAssertEqual(
+            CommandBuilder.sanitizeMinutes(CommandBuilder.maxDurationMinutes * 10),
+            CommandBuilder.maxDurationMinutes
+        )
+        XCTAssertEqual(DurationFormatter.formatDuration(.infinity, isChinese: false), "Indefinite")
+        XCTAssertEqual(DurationFormatter.formatDuration(.nan, isChinese: true), "永久")
+        XCTAssertEqual(DurationFormatter.formatShortPreset(.infinity, isChinese: false), "∞")
+
+        // A poisoned stored value must not survive loading.
+        let suiteName = "io.github.laiyongqiang.SleepSkip.poison.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(Double.infinity, forKey: "sleepskip.durationMinutes")
+        defaults.set(Double.nan, forKey: "sleepskip.customMinutes")
+        let loaded = PreferencesStore(defaults: defaults).load()
+        XCTAssertEqual(loaded.durationMinutes, 240)
+        XCTAssertEqual(loaded.customMinutes, 90)
+    }
+
+    func testURLMinutesSanitized() {
+        let inf = URLCommandParser.parse(URL(string: "sleepskip://start?minutes=inf")!)
+        XCTAssertEqual(inf, .start(mode: nil, minutes: nil, lockOnStart: nil, allowClosedLid: nil))
+        let huge = URLCommandParser.parse(URL(string: "sleepskip://start?minutes=1e300")!)
+        XCTAssertEqual(
+            huge,
+            .start(mode: nil, minutes: CommandBuilder.maxDurationMinutes, lockOnStart: nil, allowClosedLid: nil)
+        )
     }
 
     func testPreferencesPersistenceRoundTrip() throws {
-        let suiteName = "io.github.laiyongqiang.SleepGuard.test.\(UUID().uuidString)"
+        let suiteName = "io.github.laiyongqiang.SleepSkip.test.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -139,6 +205,7 @@ final class SleepGuardCoreTests: XCTestCase {
         XCTAssertEqual(initial.lockOnStart, true)
         XCTAssertEqual(initial.allowClosedLid, false)
         XCTAssertEqual(initial.stopOnUnplug, false)
+        XCTAssertEqual(initial.autoFollowAgents, false)
         XCTAssertEqual(initial.batteryThresholdPercent, 10)
 
         var updated = initial
@@ -148,6 +215,7 @@ final class SleepGuardCoreTests: XCTestCase {
         updated.lockOnStart = false
         updated.allowClosedLid = true
         updated.stopOnUnplug = true
+        updated.autoFollowAgents = true
         updated.language = .en
         store.save(updated)
 
@@ -155,7 +223,7 @@ final class SleepGuardCoreTests: XCTestCase {
     }
 
     func testSessionManagerLifecycleAndPreFlightGuards() throws {
-        let suiteName = "io.github.laiyongqiang.SleepGuard.sm.\(UUID().uuidString)"
+        let suiteName = "io.github.laiyongqiang.SleepSkip.sm.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let store = PreferencesStore(defaults: defaults)
