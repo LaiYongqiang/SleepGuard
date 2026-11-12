@@ -10,9 +10,9 @@
 
 ## Preview
 
-| Idle (English) | Active Countdown (Light) | Active Countdown (Dark) |
-| :---: | :---: | :---: |
-| <img src="docs/images/preview-idle-en.png" width="260" alt="Idle English Preview" /> | <img src="docs/images/preview-running-light.png" width="260" alt="Active Light Preview" /> | <img src="docs/images/preview-running-dark.png" width="260" alt="Active Dark Preview" /> |
+| Idle (Light) | Active Countdown (Light) | Active Countdown (Dark) | Preferences |
+| :---: | :---: | :---: | :---: |
+| <img src="docs/images/preview-idle-en.png" width="210" alt="Idle Light Preview" /> | <img src="docs/images/preview-running-light-en.png" width="210" alt="Active Light Preview" /> | <img src="docs/images/preview-running-dark-en.png" width="210" alt="Active Dark Preview" /> | <img src="docs/images/preview-settings-en.png" width="210" alt="Preferences Preview" /> |
 
 ---
 

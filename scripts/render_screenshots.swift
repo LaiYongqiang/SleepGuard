@@ -69,6 +69,7 @@ struct ScreenshotRenderer {
         )
 
         manager.showSettings = true
+        manager.isRunning = false
         render(
             view: SleepGuardPopoverView(manager: manager),
             appearance: .aqua,
@@ -76,12 +77,32 @@ struct ScreenshotRenderer {
         )
 
         manager.showSettings = false
-        manager.isRunning = false
         manager.config.language = .en
         render(
             view: SleepGuardPopoverView(manager: manager),
             appearance: .aqua,
             outPath: "\(outDir)/preview-idle-en.png"
+        )
+
+        manager.isRunning = true
+        render(
+            view: SleepGuardPopoverView(manager: manager),
+            appearance: .aqua,
+            outPath: "\(outDir)/preview-running-light-en.png"
+        )
+
+        render(
+            view: SleepGuardPopoverView(manager: manager),
+            appearance: .darkAqua,
+            outPath: "\(outDir)/preview-running-dark-en.png"
+        )
+
+        manager.isRunning = false
+        manager.showSettings = true
+        render(
+            view: SleepGuardPopoverView(manager: manager),
+            appearance: .aqua,
+            outPath: "\(outDir)/preview-settings-en.png"
         )
     }
 }
