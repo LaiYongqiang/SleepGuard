@@ -141,6 +141,14 @@ public final class AgentActivityTracker: @unchecked Sendable {
         return reference.timeIntervalSince(start) >= policy.maxAutoSessionDuration
     }
 
+    /// Ends the current automatic session window but keeps recent activity, so a still-busy
+    /// agent can be followed again immediately instead of waiting for a brand-new write.
+    public func restartSessionWindow() {
+        lock.lock()
+        sessionStart = nowProvider()
+        lock.unlock()
+    }
+
     /// Drops all activity and ends the current automatic session.
     public func reset() {
         lock.lock()

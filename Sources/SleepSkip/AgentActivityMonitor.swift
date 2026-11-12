@@ -55,7 +55,8 @@ final class AgentActivityMonitor {
         guard !existing.isEmpty else { return }
 
         watchedPaths = existing.map(\.path)
-        suffixToSource = existing.map { (suffix: "/" + ($0.path as NSString).lastPathComponent, sourceID: $0.id) }
+        // Match on the full watched path: two different sources can share a last component.
+        suffixToSource = existing.map { (suffix: $0.path, sourceID: $0.id) }
 
         var context = FSEventStreamContext(
             version: 0,
@@ -163,6 +164,14 @@ final class AgentActivityMonitor {
                 didReportLimit = true
                 onSessionLimitReached()
             }
+            // Start a new window so a still-busy agent can be followed again after the release.
+            // Without this the tracker stays past its ceiling forever and auto-follow dies
+            // until the app restarts.
+            tracker.restartSessionWindow()
+            didReportLimit = false
+            lastReported = .inactive
+            quietTimer?.cancel()
+            quietTimer = nil
             return
         }
 

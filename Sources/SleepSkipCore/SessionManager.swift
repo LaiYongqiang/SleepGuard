@@ -66,6 +66,9 @@ public final class SessionManager: ObservableObject {
     @Published public var followingAgents: [String] = []
     /// True once an automatic session hit its hard ceiling; the next detection starts fresh.
     @Published public var autoFollowLimitReached: Bool = false
+    /// Set after the user stops a session while agents are still writing, so the Mac does not
+    /// immediately wake itself again. Cleared once all agents have gone quiet.
+    private var autoFollowSuppressed = false
 
     private let store: PreferencesStore
     private let caffeinateRunner: CaffeinateRunning
@@ -100,6 +103,7 @@ public final class SessionManager: ObservableObject {
     public func setAutoFollowEnabled(_ enabled: Bool) {
         guard config.autoFollowAgents != enabled else { return }
         config.autoFollowAgents = enabled
+        autoFollowSuppressed = false
         persistConfig()
         if !enabled {
             endAutoFollow()
@@ -111,6 +115,12 @@ public final class SessionManager: ObservableObject {
     /// Called by the monitor on every display-relevant transition.
     public func handleAgentActivity(_ state: AgentActivityState) {
         guard config.autoFollowAgents else { return }
+
+        // Re-arm only after the agents have actually gone quiet.
+        if autoFollowSuppressed {
+            if state == .inactive { autoFollowSuppressed = false }
+            return
+        }
 
         // A manual session always wins; auto-follow never overrides it.
         guard !isRunning else { return }
@@ -443,6 +453,13 @@ public final class SessionManager: ObservableObject {
         caffeinateRunner.stop()
         backpackGuard.disable()
 
+        // A user-initiated stop while agents are still writing should stay stopped; only a fresh
+        // quiet period re-arms auto-follow.
+        if reason == .manual, config.autoFollowAgents {
+            autoFollowSuppressed = true
+        }
+        isFollowingAgents = false
+        followingAgents = []
         isRunning = false
         activeClosedLid = false
         endDate = nil

@@ -233,6 +233,12 @@ struct VerifyRunner {
         expect(ceilingTracker.autoSessionExceeded(), "Hard ceiling is reached")
         expect(!ceilingTracker.shouldHoldAssertion(for: ceilingTracker.evaluate()), "Ceiling overrides activity")
 
+        // Regression: hitting the ceiling must not disable auto-follow permanently.
+        ceilingTracker.restartSessionWindow()
+        ceilingTracker.recordActivity(sourceID: "claude-code")
+        expect(!ceilingTracker.autoSessionExceeded(), "Restarting the window clears the ceiling")
+        expect(ceilingTracker.shouldHoldAssertion(for: ceilingTracker.evaluate()), "Following resumes after a restart")
+
         // Parallel sessions: any active source keeps the assertion.
         clock = Date(timeIntervalSince1970: 1_900_000_000)
         let parallel = AgentActivityTracker(
@@ -248,6 +254,33 @@ struct VerifyRunner {
         } else {
             expect(false, "Parallel sessions should stay active")
         }
+
+        // Regression: a manual stop must not be immediately undone by auto-follow.
+        clock = Date(timeIntervalSince1970: 2_000_000_000)
+        let caf2 = MockCaffeinateRunner()
+        let sm = SessionManager(
+            store: store,
+            caffeinateRunner: caf2,
+            backpackGuard: MockBackpackGuard(),
+            powerMonitor: MockPowerMonitor(),
+            screenLocker: MockScreenLocker(),
+            notifier: MockNotifier(),
+            loginItem: MockLoginItem(),
+            nowProvider: { clock },
+            checkStaleSleepOnInit: false
+        )
+        sm.setAutoFollowEnabled(true)
+        sm.handleAgentActivity(.active(agents: ["claude-code"], lastActivity: clock))
+        expect(sm.isFollowingAgents && sm.isRunning, "Auto-follow engages on activity")
+        sm.stopSession(reason: .manual)
+        expect(!sm.isFollowingAgents && !sm.isRunning, "Manual stop ends the automatic session")
+        sm.handleAgentActivity(.active(agents: ["claude-code"], lastActivity: clock))
+        expect(!sm.isRunning, "Activity right after a manual stop does not revive the session")
+        sm.handleAgentActivity(.inactive)
+        sm.handleAgentActivity(.active(agents: ["claude-code"], lastActivity: clock))
+        expect(sm.isFollowingAgents && sm.isRunning, "A fresh quiet-then-active cycle re-arms auto-follow")
+        sm.setAutoFollowEnabled(false)
+        expect(!sm.isRunning && !sm.isFollowingAgents, "Disabling auto-follow releases everything")
 
         // Default sources point at transcript directories under the home folder.
         let sources = AgentSource.defaults(homeDirectory: URL(fileURLWithPath: "/Users/example"))

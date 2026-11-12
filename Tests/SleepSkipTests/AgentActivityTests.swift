@@ -74,6 +74,12 @@ final class AgentActivityTests: XCTestCase {
         }
         XCTAssertTrue(tracker.autoSessionExceeded())
         XCTAssertFalse(tracker.shouldHoldAssertion(for: tracker.evaluate()))
+
+        // Hitting the ceiling must not disable auto-follow for the rest of the app's lifetime.
+        tracker.restartSessionWindow()
+        tracker.recordActivity(sourceID: "claude-code")
+        XCTAssertFalse(tracker.autoSessionExceeded())
+        XCTAssertTrue(tracker.shouldHoldAssertion(for: tracker.evaluate()))
     }
 
     func testResetClearsSession() {
