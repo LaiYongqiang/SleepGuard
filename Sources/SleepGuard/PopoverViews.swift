@@ -1,0 +1,632 @@
+import Cocoa
+import SleepGuardCore
+import SwiftUI
+
+struct SleepGuardPopoverView: View {
+    @ObservedObject var manager: SessionManager
+
+    private var t: L10n { manager.l10n }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            headerBar
+
+            if let error = manager.errorMessage {
+                errorBanner(error)
+            } else if manager.staleSleepDisabled && !manager.isRunning {
+                staleSleepBanner
+            }
+
+            if manager.showSettings {
+                settingsContent
+            } else if manager.isRunning {
+                runningContent
+            } else {
+                idleContent
+            }
+        }
+        .padding(16)
+        .frame(width: 356)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: - Header
+
+    private var headerBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: manager.isRunning ? "cup.and.saucer.fill" : "cup.and.saucer")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(manager.isRunning ? .accentColor : .primary)
+
+            Text(t.appName)
+                .font(.system(size: 14, weight: .semibold))
+
+            if manager.isRunning {
+                Text(manager.activeClosedLid ? t.backpackBadge : t.runningBadge)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.green)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.green.opacity(0.14)))
+            }
+
+            Spacer()
+
+            Button(action: {
+                manager.showSettings.toggle()
+            }) {
+                Image(systemName: manager.showSettings ? "xmark.circle.fill" : "gearshape")
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help(manager.showSettings ? t.backButton : t.settingsTitle)
+        }
+    }
+
+    // MARK: - Banners
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundColor(.red)
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundColor(.primary)
+                .lineLimit(2)
+            Spacer()
+            Button(action: { manager.errorMessage = nil }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.red.opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.red.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    private var staleSleepBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "bolt.trianglebadge.exclamationmark.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.orange)
+            Text(t.staleSleepDisabledBanner)
+                .font(.system(size: 11))
+                .foregroundColor(.primary)
+            Spacer()
+            Button(t.restoreSleepButton) {
+                manager.restoreStaleSleepDisabled()
+            }
+            .buttonStyle(BorderedButtonStyle())
+            .controlSize(.mini)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.orange.opacity(0.12))
+        )
+    }
+
+    // MARK: - Idle View
+
+    private var idleContent: some View {
+        VStack(spacing: 12) {
+            // Status summary
+            VStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.secondary.opacity(0.45))
+                        .frame(width: 7, height: 7)
+                    Text(t.notRunningTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                Text(t.lastConfigSummary(manager.config))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            )
+
+            // Mode cards
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(t.modeSectionTitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(manager.config.mode == .background ? t.modeTipBackground : t.modeTipDisplay)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+
+                // Mode A: Background (with nested lock & closed-lid toggles)
+                VStack(spacing: 0) {
+                    modeRow(
+                        mode: .background,
+                        isSelected: manager.config.mode == .background,
+                        badge: t.modeRecommendedBadge
+                    ) {
+                        manager.selectMode(.background)
+                    }
+
+                    if manager.config.mode == .background {
+                        Divider()
+                            .padding(.horizontal, 10)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 12) {
+                                Toggle(t.lockOnStartLabel, isOn: Binding(
+                                    get: { manager.config.lockOnStart },
+                                    set: { manager.setLockOnStart($0) }
+                                ))
+                                .toggleStyle(CheckboxToggleStyle())
+                                .font(.system(size: 11))
+
+                                Toggle(t.closedLidLabel, isOn: Binding(
+                                    get: { manager.config.allowClosedLid },
+                                    set: { manager.setAllowClosedLid($0) }
+                                ))
+                                .toggleStyle(CheckboxToggleStyle())
+                                .font(.system(size: 11))
+                            }
+
+                            if manager.config.allowClosedLid {
+                                Text(t.closedLidWarning)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.orange)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .background(cardBackground(selected: manager.config.mode == .background))
+                .overlay(cardBorder(selected: manager.config.mode == .background))
+
+                // Mode B: Keep Display On
+                modeRow(
+                    mode: .keepDisplay,
+                    isSelected: manager.config.mode == .keepDisplay,
+                    badge: nil
+                ) {
+                    manager.selectMode(.keepDisplay)
+                }
+                .background(cardBackground(selected: manager.config.mode == .keepDisplay))
+                .overlay(cardBorder(selected: manager.config.mode == .keepDisplay))
+            }
+
+            // Duration section
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(t.durationSectionTitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text(DurationFormatter.formatDuration(manager.config.durationMinutes, isChinese: t.isZh))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 5) {
+                    ForEach(SessionConfig.standardPresets, id: \.self) { min in
+                        durationChip(
+                            title: DurationFormatter.formatShortPreset(min, isChinese: t.isZh),
+                            selected: manager.config.durationMinutes == min && !manager.showCustomInput
+                        ) {
+                            manager.selectDuration(min)
+                        }
+                    }
+
+                    let isCustomSelected = !SessionConfig.standardPresets.contains(manager.config.durationMinutes)
+                    let customLabel: String = {
+                        guard isCustomSelected else { return t.customDuration }
+                        let mins = Int(manager.config.durationMinutes.rounded())
+                        return t.isZh ? "\(mins)分" : "\(mins)m"
+                    }()
+                    durationChip(
+                        title: customLabel,
+                        selected: isCustomSelected || manager.showCustomInput
+                    ) {
+                        manager.showCustomInput.toggle()
+                    }
+                }
+
+                if manager.showCustomInput {
+                    HStack(spacing: 6) {
+                        Text(t.customDuration)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                        TextField("90", text: Binding(
+                            get: { manager.customMinutesText },
+                            set: { manager.customMinutesText = $0 }
+                        ))
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(width: 64)
+                        .multilineTextAlignment(.center)
+                        .onSubmit {
+                            manager.applyCustomDuration()
+                        }
+                        Text(t.minutesUnit)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button(t.applyButton) {
+                            manager.applyCustomDuration()
+                        }
+                        .buttonStyle(BorderedButtonStyle())
+                        .controlSize(.small)
+                    }
+                    .padding(.top, 2)
+                }
+            }
+
+            // Primary Start CTA
+            Button(action: {
+                manager.startConfiguredSession()
+            }) {
+                HStack(spacing: 6) {
+                    if manager.isAuthorizing {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 11))
+                    }
+                    Text(t.startButton)
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.accentColor.opacity(manager.isAuthorizing ? 0.65 : 1.0))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(manager.isAuthorizing)
+        }
+    }
+
+    // MARK: - Running View
+
+    private var runningContent: some View {
+        VStack(spacing: 12) {
+            // Big countdown card
+            VStack(spacing: 5) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 7, height: 7)
+                    Text(t.runningTitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.green)
+                }
+
+                if manager.isIndefinite {
+                    Text(t.indefiniteRunning)
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .padding(.vertical, 2)
+                } else {
+                    Text(DurationFormatter.formatCountdown(manager.remainingSeconds))
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                }
+
+                let modeSummary = t.modeTitle(manager.activeMode)
+                let lidPart = manager.activeClosedLid ? " · \(t.backpackBadge)" : ""
+                Text("\(modeSummary)\(lidPart)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+
+                if let endDate = manager.endDate, !manager.isIndefinite {
+                    Text(t.projectedEndLabel(DurationFormatter.formatClockTime(endDate)))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(Color.green.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(Color.green.opacity(0.22), lineWidth: 1)
+            )
+
+            // Live mode switching (preserves remaining duration)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(t.modeSectionTitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+
+                modeRow(
+                    mode: .background,
+                    isSelected: manager.activeMode == .background,
+                    badge: nil
+                ) {
+                    manager.switchRunningMode(to: .background)
+                }
+                .background(cardBackground(selected: manager.activeMode == .background))
+                .overlay(cardBorder(selected: manager.activeMode == .background))
+
+                modeRow(
+                    mode: .keepDisplay,
+                    isSelected: manager.activeMode == .keepDisplay,
+                    badge: nil
+                ) {
+                    manager.switchRunningMode(to: .keepDisplay)
+                }
+                .background(cardBackground(selected: manager.activeMode == .keepDisplay))
+                .overlay(cardBorder(selected: manager.activeMode == .keepDisplay))
+            }
+
+            // Duration info + Extend 30m
+            HStack {
+                Text(t.currentSettingLabel(DurationFormatter.formatDuration(manager.initialMinutes, isChinese: t.isZh)))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Spacer()
+                if !manager.isIndefinite {
+                    Button(t.extend30mButton) {
+                        manager.extendSession(byMinutes: 30)
+                    }
+                    .buttonStyle(BorderedButtonStyle())
+                    .controlSize(.small)
+                }
+            }
+
+            // Stop button (low-emphasis destructive style)
+            Button(action: {
+                manager.stopSession(reason: .manual)
+            }) {
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.red)
+                        .frame(width: 9, height: 9)
+                    Text(t.stopButton)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.red)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.red.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.red.opacity(0.22), lineWidth: 1)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+
+            Divider()
+
+            // Bottom quick utilities
+            HStack {
+                Button(action: {
+                    ScreenLocker.lockScreen()
+                    manager.onRequestClosePopover?()
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "lock")
+                            .font(.system(size: 11))
+                        Text(t.lockScreenButton)
+                            .font(.system(size: 12))
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Spacer()
+
+                Button(action: {
+                    manager.stopSession(reason: .silent)
+                    NSApp.terminate(nil)
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                            .font(.system(size: 11))
+                        Text(t.quitButton)
+                            .font(.system(size: 12))
+                    }
+                    .foregroundColor(.secondary)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+
+    // MARK: - Settings View
+
+    private var settingsContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(t.settingsTitle)
+                .font(.system(size: 13, weight: .semibold))
+
+            VStack(spacing: 10) {
+                HStack {
+                    Text(t.launchAtLoginLabel)
+                        .font(.system(size: 12))
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { manager.launchAtLogin },
+                        set: { manager.toggleLaunchAtLogin($0) }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(SwitchToggleStyle())
+                    .controlSize(.small)
+                }
+
+                Divider()
+
+                HStack {
+                    Text(t.batteryCutoffLabel)
+                        .font(.system(size: 12))
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { manager.config.batteryThresholdPercent },
+                        set: { manager.setBatteryThreshold($0) }
+                    )) {
+                        Text(t.batteryCutoffOff).tag(0)
+                        Text("5%").tag(5)
+                        Text("10%").tag(10)
+                        Text("15%").tag(15)
+                        Text("20%").tag(20)
+                    }
+                    .labelsHidden()
+                    .frame(width: 90)
+                }
+
+                Divider()
+
+                HStack {
+                    Text(t.languageLabel)
+                        .font(.system(size: 12))
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { manager.config.language },
+                        set: { manager.setLanguage($0) }
+                    )) {
+                        Text(t.languageSystem).tag(AppLanguage.system)
+                        Text("中文").tag(AppLanguage.zhHans)
+                        Text("English").tag(AppLanguage.en)
+                    }
+                    .labelsHidden()
+                    .frame(width: 110)
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.6))
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(t.engineInfoTitle)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Text(t.engineInfoDetail)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Button("GitHub: LaiYongqiang/SleepGuard") {
+                    if let url = URL(string: "https://github.com/LaiYongqiang/SleepGuard") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .buttonStyle(LinkButtonStyle())
+                .font(.system(size: 11))
+
+                Spacer()
+
+                Button(t.backButton) {
+                    manager.showSettings = false
+                }
+                .buttonStyle(BorderedProminentButtonStyle())
+                .controlSize(.small)
+            }
+        }
+    }
+
+    // MARK: - Components
+
+    @ViewBuilder
+    private func modeRow(
+        mode: GuardMode,
+        isSelected: Bool,
+        badge: String?,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: mode.iconName)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(isSelected ? .accentColor : .secondary)
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(t.modeTitle(mode))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.primary)
+                        if let badge {
+                            Text(badge)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.accentColor)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                        }
+                    }
+                    Text(t.modeSubtitle(mode))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 13))
+                    .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.45))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    @ViewBuilder
+    private func durationChip(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: selected ? .semibold : .regular))
+                .foregroundColor(selected ? .white : .primary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(selected ? Color.accentColor : Color(NSColor.controlBackgroundColor).opacity(0.7))
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private func cardBackground(selected: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(selected ? Color.accentColor.opacity(0.08) : Color(NSColor.controlBackgroundColor).opacity(0.5))
+    }
+
+    private func cardBorder(selected: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .stroke(selected ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.12), lineWidth: 1)
+    }
+}
