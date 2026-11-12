@@ -69,6 +69,8 @@ URL Scheme（适用 Raycast / Alfred / 快捷指令）：
 brew install --cask --no-quarantine laiyongqiang/tap/sleepguard
 ```
 
+*(Homebrew 7+ 如提示未信任第三方 Tap，执行一次 `brew trust laiyongqiang/tap` 即可。)*
+
 ### 下载 Release（通用二进制：Apple Silicon + Intel）
 
 1. 前往 [GitHub Releases](https://github.com/LaiYongqiang/SleepGuard/releases) 下载 `SleepGuard-1.1.0-macOS-universal.dmg`，拖入 `/Applications`。

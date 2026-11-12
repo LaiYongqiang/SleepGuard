@@ -12,7 +12,7 @@ cask "sleepguard" do
     strategy :github_latest
   end
 
-  depends_on macos: ">= :ventura"
+  depends_on macos: :ventura
 
   app "SleepGuard.app"
   binary "#{appdir}/SleepGuard.app/Contents/MacOS/SleepGuard", target: "sleepguard"
