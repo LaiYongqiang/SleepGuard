@@ -35,6 +35,9 @@ struct SleepSkipPopoverView: View {
         }
         .padding(16)
         .frame(width: 356)
+        // NSPopover's own background is translucent, so without an opaque fill the desktop and
+        // the menu bar behind it show through and the whole panel reads as washed-out grey.
+        .background(Color(NSColor.windowBackgroundColor))
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -42,8 +45,9 @@ struct SleepSkipPopoverView: View {
 
     private var headerBar: some View {
         HStack(spacing: 8) {
-            Image(systemName: manager.isEffectivelyActive ? "moon.zzz.fill" : "moon")
-                .font(.system(size: 14, weight: .semibold))
+            // `moon.zzz.fill` turns into an illegible blob at 14 pt; the plain moon stays crisp.
+            Image(systemName: manager.isEffectivelyActive ? "moon.fill" : "moon")
+                .font(.system(size: 15, weight: .medium))
                 .foregroundColor(manager.isEffectivelyActive ? .accentColor : .primary)
 
             Text(t.appName)

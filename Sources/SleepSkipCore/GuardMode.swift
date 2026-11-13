@@ -251,7 +251,7 @@ public enum CLIParser {
 public enum AppInfo {
     /// Single source of truth for the version shown in the CLI banner and the settings panel.
     /// The build script rewrites this value from the git tag, so it never drifts from the release.
-    public static let version = "1.3.1"
+    public static let version = "1.3.2"
 
     public static let repositoryURL = "https://github.com/LaiYongqiang/SleepSkip"
 }
