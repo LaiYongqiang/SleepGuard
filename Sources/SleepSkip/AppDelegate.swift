@@ -88,6 +88,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    /// Clicking the app in Finder or Dock while it is already running. Without this, a menu bar
+    /// app (`.accessory` activation policy) simply does nothing — there is no window to bring
+    /// forward, so the launch appears to have been ignored.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showPopover()
+        return true
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
             guard let command = URLCommandParser.parse(url) else { continue }
