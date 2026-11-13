@@ -50,7 +50,7 @@ Measured on the same machine while evaluating the auto-follow design:
 
 | Approach | CPU over 30 s | Forced wakeups | Verdict |
 | :--- | ---: | ---: | :--- |
-| FSEvents on transcript directories (**shipped**) | 0.23 ms | 0 | Used |
+| FSEvents on transcript directories (**shipped**, 3 sources) | 0.23 ms | 0 | Used |
 | `proc_listallpids` + `proc_pidpath` polling, 2 s | 81 ms | 15 | Rejected |
 | Same, 1 s | 161 ms | 21 | Rejected |
 

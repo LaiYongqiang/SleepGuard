@@ -26,8 +26,8 @@ final class AgentActivityMonitor {
     /// UI-facing callbacks are hopped to the main queue by the owner.
     private let eventQueue = DispatchQueue(label: "io.github.laiyongqiang.SleepSkip.fsevents")
 
-    /// Path suffix → source id, so an event can be attributed without inspecting content.
-    private var suffixToSource: [(suffix: String, sourceID: String)] = []
+    /// Watched sources, so an event can be attributed without inspecting file contents.
+    private var activeSources: [AgentSource] = []
 
     var isRunning: Bool { stream != nil }
 
@@ -55,8 +55,7 @@ final class AgentActivityMonitor {
         guard !existing.isEmpty else { return }
 
         watchedPaths = existing.map(\.path)
-        // Match on the full watched path: two different sources can share a last component.
-        suffixToSource = existing.map { (suffix: $0.path, sourceID: $0.id) }
+        activeSources = existing
 
         var context = FSEventStreamContext(
             version: 0,
@@ -112,7 +111,7 @@ final class AgentActivityMonitor {
         FSEventStreamRelease(stream)
         self.stream = nil
         watchedPaths = []
-        suffixToSource = []
+        activeSources = []
         quietTimer?.cancel()
         quietTimer = nil
         lastReported = .inactive
@@ -122,11 +121,11 @@ final class AgentActivityMonitor {
 
     private func handleEvents(paths: [String], count: Int) {
         var matched = false
-        for path in paths.prefix(count) where path.hasSuffix(".jsonl") {
-            if let source = suffixToSource.first(where: { path.contains($0.suffix) }) {
-                tracker.recordActivity(sourceID: source.sourceID)
-                matched = true
-            }
+        for path in paths.prefix(count) {
+            // Each source declares its own transcript extensions; DSH writes `.jsonl.zstd`.
+            guard let source = activeSources.first(where: { $0.matches(filePath: path) }) else { continue }
+            tracker.recordActivity(sourceID: source.id)
+            matched = true
         }
         guard matched else { return }
         scheduleQuietEvaluation()

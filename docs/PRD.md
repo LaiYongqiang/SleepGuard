@@ -55,7 +55,7 @@ Modern macOS developers frequently run long-lived engineering and AI workflows (
 
 Instead of asking the user to remember to start and stop a session, SleepSkip can hold the assertion exactly while a coding agent is working.
 
-- **Signal**: FSEvents on the agents' transcript directories (`~/.claude/projects`, `~/.codex/sessions`). Only the fact that a `.jsonl` file changed is observed — contents are never read, parsed, or transmitted.
+- **Signal**: FSEvents on the agents' transcript directories (`~/.claude/projects`, `~/.codex/sessions`, `~/.dsh/sessions`). Each source declares the filename suffixes that count as a write, because agents differ: Claude Code and Codex append `.jsonl`, while DeepSeek Harness writes compressed `session.v4.jsonl.zstd`. Only the fact that a transcript file changed is observed — contents are never read, parsed, or transmitted.
 - **No polling**: the monitor is a kernel event stream. Measured cost: ~0.2 ms of CPU over 20 seconds while watching a live session directory, with no wakeups beyond what the status item already needs. Process polling at 1 Hz was measured at ~160 ms/30 s plus one wakeup per second and was rejected.
 - **Timing rules**: a write keeps the agent active for 30 s; then a 5-minute grace period covers long tool calls that produce no output; then the assertion is released.
 - **Hard ceiling**: one automatic session cannot exceed 2 hours. On hitting it, SleepSkip releases and notifies, so a chatty background process can never pin the Mac awake all night.
