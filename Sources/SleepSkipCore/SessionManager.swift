@@ -46,6 +46,8 @@ public final class SessionManager: ObservableObject {
     @Published public var config: SessionConfig
     @Published public var isRunning: Bool = false
     @Published public var isAuthorizing: Bool = false
+    /// Identifies the in-flight authorization so a stale timeout cannot cancel a newer attempt.
+    private var activeAuthorizationToken: UUID?
     @Published public var activeMode: GuardMode = .background
     @Published public var activeClosedLid: Bool = false
     @Published public var isIndefinite: Bool = false
@@ -384,8 +386,19 @@ public final class SessionManager: ObservableObject {
 
         if wantClosedLid {
             isAuthorizing = true
+            // An authorization dialog that is dismissed without a result, or an AppleScript call
+            // that never returns, used to leave the button spinning forever with no way out.
+            let authorizationToken = UUID()
+            activeAuthorizationToken = authorizationToken
+            DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+                guard let self, self.isAuthorizing, self.activeAuthorizationToken == authorizationToken else { return }
+                self.isAuthorizing = false
+                self.activeAuthorizationToken = nil
+                self.errorMessage = self.l10n.authorizationTimedOut
+            }
             backpackGuard.enable { [weak self] result in
-                guard let self else { return }
+                guard let self, self.activeAuthorizationToken == authorizationToken else { return }
+                self.activeAuthorizationToken = nil
                 self.isAuthorizing = false
                 switch result {
                 case .success:
@@ -539,6 +552,15 @@ public final class SessionManager: ObservableObject {
             screenLocker.lockScreen()
         case .open:
             break
+        }
+    }
+
+    /// Re-reads `SleepDisabled` so a guard left behind by a previous run is reported promptly.
+    public func refreshStaleSleepState() {
+        guard !isRunning else { return }
+        backpackGuard.checkSleepDisabledAsync { [weak self] disabled in
+            guard let self, !self.isRunning else { return }
+            self.staleSleepDisabled = disabled
         }
     }
 

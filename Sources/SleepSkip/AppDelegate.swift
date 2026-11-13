@@ -68,6 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         sessionManager.onAutoFollowNoticeDismissed = { [weak self] in
             self?.store.hasSeenAutoFollowNotice = true
         }
+        // A crash or force-quit can leave the lid guard script running with `disablesleep 1`
+        // and no sentinel watching it. Clean that up before anything else reads power state.
+        BackpackGuard.terminateDetachedGuard()
         sessionManager.setAgentSources(availableAgentSources)
         sessionManager.presentAutoFollowNoticeIfNeeded(hasDismissed: store.hasSeenAutoFollowNotice)
         if sessionManager.isAutoFollowEnabled {
@@ -338,6 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func showPopover() {
         guard let button = statusItem.button else { return }
         sessionManager.reconcileOnWakeOrShow()
+        sessionManager.refreshStaleSleepState()
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
