@@ -118,8 +118,8 @@ public struct L10n {
     public var engineInfoTitle: String { isZh ? "底层引擎与 CLI 伴侣" : "Engine & CLI Companion" }
     public var engineInfoDetail: String {
         isZh
-            ? "基于 macOS 原生 caffeinate -w <PID>，收起面板零定时器（0% CPU）。支持 sleepskip:// URL 与 CLI 守护：sleepskip -- codex。"
-            : "Native caffeinate -w <PID>, zero timers when closed (0% CPU). Supports sleepskip:// URLs & CLI guard: sleepskip -- codex."
+            ? "基于 macOS 原生 caffeinate -w <PID>，收起面板后不跑任何定时器或轮询。支持 sleepskip:// URL 与 CLI 守护：sleepskip -- codex。"
+            : "Native caffeinate -w <PID>; no timers or polling once the panel closes. Supports sleepskip:// URLs & CLI guard: sleepskip -- codex."
     }
 
     // Menu bar context menu

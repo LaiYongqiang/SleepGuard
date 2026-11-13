@@ -13,7 +13,7 @@ Modern macOS developers frequently run long-lived engineering and AI workflows (
 2. **Separation of Background Compute & Desktop GUI**:
    - **CLI, code generation, builds, tests, local servers, and headless browser jobs** execute cleanly while the screen is off and locked.
    - **Desktop GUI automation (Computer Use / `ScreenCaptureKit` / `CGEvent`)** requires an active, unlocked WindowServer session.
-3. **Zero Idle Overhead**: The utility itself must introduce zero background polling and `0.0%` idle CPU wakeups when the popover is closed.
+3. **Zero Idle Overhead**: The utility itself must introduce no background polling and no timers of its own when the popover is closed. Measured idle cost is documented in `docs/PERFORMANCE.md`.
 
 ---
 
