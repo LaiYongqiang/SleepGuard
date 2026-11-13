@@ -200,6 +200,38 @@ struct VerifyRunner {
         manager.reconcileOnWakeOrShow()
         expect(!manager.isRunning && notif.sent.count == 1, "Wake reconcile catches exited caffeinate and notifies once")
 
+        // 3b. Rename migration: an upgrade must not lose settings
+        let newSuite = "io.github.laiyongqiang.SleepSkip.migrate.\(UUID().uuidString)"
+        let oldSuite = "io.github.laiyongqiang.SleepGuard.migrate.\(UUID().uuidString)"
+        let newDefaults = UserDefaults(suiteName: newSuite)!
+        let oldDefaults = UserDefaults(suiteName: oldSuite)!
+        oldDefaults.set("keepDisplay", forKey: "sleepguard.mode")
+        oldDefaults.set(90.0, forKey: "sleepguard.durationMinutes")
+        oldDefaults.set(false, forKey: "sleepguard.lockOnStart")
+        oldDefaults.set("en", forKey: "sleepguard.language")
+        PreferencesStore.migrateFromLegacyDomainIfNeeded(defaults: newDefaults, legacyDefaults: oldDefaults)
+        let migrated = PreferencesStore(defaults: newDefaults).load()
+        expect(migrated.mode == .keepDisplay, "Legacy mode migrates")
+        expect(migrated.durationMinutes == 90, "Legacy duration migrates")
+        expect(migrated.lockOnStart == false, "Legacy lock preference migrates")
+        expect(migrated.language == .en, "Legacy language migrates")
+
+        let freshSuite = "io.github.laiyongqiang.SleepSkip.existing.\(UUID().uuidString)"
+
+        // Migration is one-shot and never overwrites settings the new domain already has.
+        oldDefaults.set("background", forKey: "sleepguard.mode")
+        PreferencesStore.migrateFromLegacyDomainIfNeeded(defaults: newDefaults, legacyDefaults: oldDefaults)
+        expect(PreferencesStore(defaults: newDefaults).load().mode == .keepDisplay, "Migration does not run twice")
+
+        let freshDefaults = UserDefaults(suiteName: freshSuite)!
+        freshDefaults.set("background", forKey: "sleepskip.mode")
+        freshDefaults.set(30.0, forKey: "sleepskip.durationMinutes")
+        PreferencesStore.migrateFromLegacyDomainIfNeeded(defaults: freshDefaults, legacyDefaults: oldDefaults)
+        expect(PreferencesStore(defaults: freshDefaults).load().mode == .background, "Existing settings are not overwritten")
+        for suite in [newSuite, oldSuite, freshSuite] {
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        }
+
         // 4b. Auto-follow state machine
         var clock = Date(timeIntervalSince1970: 1_700_000_000)
         let tracker = AgentActivityTracker(

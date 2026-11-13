@@ -193,6 +193,49 @@ final class SleepSkipCoreTests: XCTestCase {
         )
     }
 
+    func testMigratesSettingsFromPreRenameDomain() throws {
+        let newSuite = "io.github.laiyongqiang.SleepSkip.migrate.\(UUID().uuidString)"
+        let oldSuite = "io.github.laiyongqiang.SleepGuard.migrate.\(UUID().uuidString)"
+        let newDefaults = try XCTUnwrap(UserDefaults(suiteName: newSuite))
+        let oldDefaults = try XCTUnwrap(UserDefaults(suiteName: oldSuite))
+        defer {
+            newDefaults.removePersistentDomain(forName: newSuite)
+            oldDefaults.removePersistentDomain(forName: oldSuite)
+        }
+
+        oldDefaults.set("keepDisplay", forKey: "sleepguard.mode")
+        oldDefaults.set(90.0, forKey: "sleepguard.durationMinutes")
+        oldDefaults.set("en", forKey: "sleepguard.language")
+
+        PreferencesStore.migrateFromLegacyDomainIfNeeded(defaults: newDefaults, legacyDefaults: oldDefaults)
+        let migrated = PreferencesStore(defaults: newDefaults).load()
+        XCTAssertEqual(migrated.mode, .keepDisplay)
+        XCTAssertEqual(migrated.durationMinutes, 90)
+        XCTAssertEqual(migrated.language, .en)
+
+        // One-shot: later changes in the old domain must not leak into the new one.
+        oldDefaults.set("background", forKey: "sleepguard.mode")
+        PreferencesStore.migrateFromLegacyDomainIfNeeded(defaults: newDefaults, legacyDefaults: oldDefaults)
+        XCTAssertEqual(PreferencesStore(defaults: newDefaults).load().mode, .keepDisplay)
+    }
+
+    func testMigrationDoesNotOverwriteExistingSettings() throws {
+        let newSuite = "io.github.laiyongqiang.SleepSkip.existing.\(UUID().uuidString)"
+        let oldSuite = "io.github.laiyongqiang.SleepGuard.existing.\(UUID().uuidString)"
+        let newDefaults = try XCTUnwrap(UserDefaults(suiteName: newSuite))
+        let oldDefaults = try XCTUnwrap(UserDefaults(suiteName: oldSuite))
+        defer {
+            newDefaults.removePersistentDomain(forName: newSuite)
+            oldDefaults.removePersistentDomain(forName: oldSuite)
+        }
+
+        newDefaults.set("background", forKey: "sleepskip.mode")
+        oldDefaults.set("keepDisplay", forKey: "sleepguard.mode")
+
+        PreferencesStore.migrateFromLegacyDomainIfNeeded(defaults: newDefaults, legacyDefaults: oldDefaults)
+        XCTAssertEqual(PreferencesStore(defaults: newDefaults).load().mode, .background)
+    }
+
     func testPreferencesPersistenceRoundTrip() throws {
         let suiteName = "io.github.laiyongqiang.SleepSkip.test.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
