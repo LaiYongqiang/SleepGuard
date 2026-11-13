@@ -21,10 +21,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var wakeObserver: NSObjectProtocol?
     private var agentMonitor: AgentActivityMonitor?
 
-    private let store = PreferencesStore()
+    private let store: PreferencesStore
     let sessionManager: SessionManager
 
     override init() {
+        // Must run before SessionManager loads config: the rename moved the app to a new
+        // preferences domain, and without this an upgrade silently resets every setting.
+        let store = PreferencesStore()
+        PreferencesStore.migrateFromLegacyDomainIfNeeded(defaults: UserDefaults(suiteName: "io.github.laiyongqiang.SleepSkip") ?? .standard)
+        self.store = store
         self.sessionManager = SessionManager(
             store: store,
             caffeinateRunner: CaffeinateRunner(),
