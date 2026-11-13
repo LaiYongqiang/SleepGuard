@@ -1,12 +1,20 @@
 # SleepSkip · 惜眠
 
-**No timers. No polling. No wasted watts.** — an ultra-lightweight macOS menu bar & CLI keep-awake utility built for Vibe Coding & AI Agents.
+**Your agents aren't done. Your Mac shouldn't sleep.**
 
-[中文文档](README_CN.md) · [Product Spec (PRD)](docs/PRD.md)
+A macOS menu bar & CLI keep-awake utility that follows your AI agents instead of a timer. When Claude Code, Codex, or DeepSeek Harness writes, sleep is held off; when they go quiet, sleep comes back.
 
-> Defer sleep until your agents are done. Keep your battery and thermals dedicated to **Codex CLI, Claude Code, builds, servers, and AI Agents** — not an idle illuminated screen.
+[中文文档](README_CN.md) · [Product Spec (PRD)](docs/PRD.md) · [Measured resource usage](docs/PERFORMANCE.md)
 
-The name says it twice: **skip** the sleep your Mac doesn't need, and **spare** the battery you can't afford to waste. In Chinese it is **惜眠** — "cherish sleep": spend it sparingly.
+> **Why not Amphetamine?** It holds the Mac awake for a *duration*. SleepSkip holds it awake for a *task*. It watches agent transcript directories with FSEvents (file changes only, never contents) and releases after a 5-minute grace period — so an agent that finishes early stops costing you battery, and one that runs long doesn't get cut off.
+
+| | Amphetamine / Caffeine | SleepSkip |
+| :--- | :--- | :--- |
+| Keeps Mac awake | ✅ | ✅ |
+| Knows when your agent finished | ❌ | ✅ FSEvents, no polling |
+| Idle CPU | menu bar app | **0.09–0.24 ms per 120 s** ([measured](docs/PERFORMANCE.md)) |
+| Wrap a command (`sleepskip -- claude …`) | ❌ | ✅ exits with your command |
+| Lid-closed mode | ⚠️ unreliable | ✅ explicit, with a watchdog |
 
 ---
 
@@ -23,6 +31,7 @@ The name says it twice: **skip** the sleep your Mac doesn't need, and **spare** 
 Traditional keep-awake tools were designed a decade ago to keep screens lit while reading or presenting. In the AI Agent era, most workflows run headless in the background while your MacBook travels in a sleeve, tethers to a phone hotspot, or sits locked on battery.
 
 SleepSkip is built around first principles:
+- **Auto-follow agents** (on by default): watches the transcript folders of Claude Code, Codex, and DeepSeek Harness and holds sleep off exactly while they write, releasing after a 5-minute grace period. Measured cost is **~0.2 ms of CPU per 20 seconds**, with no more wakeups than the menu bar icon itself needs. Process polling was measured at ~160 ms/30 s plus one wakeup per second, and rejected. Only file changes are observed; transcript contents are never read. A manual session always wins, and a 2-hour hard ceiling prevents an accidental all-nighter.
 - **No timers, no polling, while the panel is closed**: Powered directly by macOS native `/usr/bin/caffeinate`. The 1Hz countdown timer exists **only** while the popover is open. [Measured](docs/PERFORMANCE.md): 0.09–0.24 ms of CPU per 120 s idle — the same order as a menu bar app that does nothing but draw its icon.
 - **Zero Orphan Processes**: Every `caffeinate` assertion is bound via `-w <PID>`. Even if force-quit, the kernel immediately tears down child assertions.
 - **Remembered Config + One-Keystroke Launch**: Remembers your last mode, duration, and lock preference. Open the popover and hit `Enter` to start immediately; hit `Enter` or `Esc` to dismiss.
@@ -33,7 +42,6 @@ SleepSkip is built around first principles:
   - **Keep Display On** (`caffeinate -di`): Keeps both system and WindowServer display rendering active — the reliable native mode for **Computer Use** (`ScreenCaptureKit` / GUI agents) and presentations. *(Tip: lower screen brightness to minimum when running Computer Use unattended.)*
 - **Optional Lid-Closed Backpack Mode**: Explicit opt-in with standard macOS Touch ID / admin authorization (`pmset -a disablesleep 1`), protected by a kernel `kqueue` + `trap` watchdog that automatically restores normal sleep (`disablesleep 0`) on stop, timeout, or app termination.
 - **Event-Driven Power Protection**: Pre-flight + `IOKit.ps` `IOPSNotificationCreateRunLoopSource` callbacks for optional **Low-Battery Cutoff** (`5%`–`20%`) and **Stop When Unplugged** (zero polling), delivered via native macOS notifications only on passive stops.
-- **Auto-Follow AI Agents** (on by default, one switch to turn off): FSEvents watches the agents' transcript folders (`~/.claude/projects`, `~/.codex/sessions`, `~/.dsh/sessions`) and holds sleep off exactly while they write, releasing after a 5-minute grace period. Measured cost is **~0.2 ms of CPU per 20 seconds**, no more wakeups than the menu bar icon itself needs — process polling was measured at ~160 ms/30 s plus one wakeup per second, and rejected. Only file changes are observed; transcript contents are never read. A manual session always wins, and a 2-hour hard ceiling prevents an accidental all-nighter. It is on out of the box so the app works without being configured; a first-run note says exactly which folders are watched, and the switch lives in Preferences.
 
 ---
 
@@ -98,7 +106,7 @@ Homebrew installs `SleepSkip.app` into `/Applications` and links the `sleepskip`
 
 ### Download Release (Universal: Apple Silicon + Intel)
 
-1. Download `SleepSkip-1.2.0-macOS-universal.dmg` from [GitHub Releases](https://github.com/LaiYongqiang/SleepSkip/releases) and drag `SleepSkip.app` to `/Applications`.
+1. Download the latest `SleepSkip-*-macOS-universal.dmg` from [GitHub Releases](https://github.com/LaiYongqiang/SleepSkip/releases) and drag `SleepSkip.app` to `/Applications`.
 2. Since release builds are ad-hoc signed without a paid Apple Developer ID, run once if Gatekeeper blocks first launch:
    ```bash
    xattr -cr /Applications/SleepSkip.app

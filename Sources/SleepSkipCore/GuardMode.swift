@@ -182,6 +182,9 @@ public enum CLICommand: Equatable, Sendable {
     case gui(openPopover: Bool)
     case watchPID(pid: Int32, mode: GuardMode, lockOnFinish: Bool)
     case runCommand(arguments: [String], mode: GuardMode, lockOnFinish: Bool)
+    /// Arguments that match nothing. Reported as an error rather than launching the GUI, so a
+    /// typo like `sleepskip start` fails visibly instead of silently opening a menu bar app.
+    case invalid(String)
 }
 
 public enum CLIParser {
@@ -241,9 +244,15 @@ public enum CLIParser {
             if let targetPID {
                 return .watchPID(pid: targetPID, mode: mode, lockOnFinish: lockOnFinish)
             }
-            return .help
+            return .invalid("watch needs a numeric pid")
         }
 
+        // Anything left over is not a recognised invocation. Launching the GUI here used to make
+        // a mistyped subcommand look like a no-op, which is confusing in a terminal.
+        let unrecognised = args.filter { !$0.hasPrefix("-") }
+        if let first = unrecognised.first {
+            return .invalid("unknown argument '\(first)'")
+        }
         return .gui(openPopover: args.contains("--open"))
     }
 }
@@ -301,6 +310,27 @@ public enum CommandBuilder {
         /usr/bin/caffeinate -i -w \(watchPID) >/dev/null 2>&1
         /usr/bin/pmset -a disablesleep 0
         """
+    }
+
+    /// AppleScript that launches `closedLidWatchScript` as root and records its pid.
+    ///
+    /// The paths are single-quoted because `do shell script` runs the command through `/bin/sh`:
+    /// `~/Library/Application Support/...` contains a space, so an unquoted path splits into
+    /// `.../Library/Application` plus `Support/...`. The script then never runs, the command still
+    /// exits 0, and the UI reports success while lid sleep was never disabled. `terminateDetachedGuard`
+    /// also finds no pid file, so its cleanup silently does nothing.
+    ///
+    /// Single quotes (not double) so the value survives one more round of shell parsing, and the
+    /// apostrophe is escaped the only way `sh` allows inside single quotes.
+    public static func closedLidLaunchScript(scriptPath: String, pidPath: String) -> String {
+        let quotedScript = shellSingleQuoted(scriptPath)
+        let quotedPid = shellSingleQuoted(pidPath)
+        return "nohup /bin/sh \(quotedScript) >/dev/null 2>&1 & echo $! > \(quotedPid)"
+    }
+
+    /// Wraps a path for `/bin/sh`, escaping embedded single quotes as `'\''`.
+    public static func shellSingleQuoted(_ value: String) -> String {
+        return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
 

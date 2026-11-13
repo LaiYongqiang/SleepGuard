@@ -360,5 +360,170 @@ final class SleepSkipCoreTests: XCTestCase {
         XCTAssertFalse(caffeinate.isRunning)
         XCTAssertEqual(caffeinate.terminationStatus, 0)
     }
+
+    // MARK: - Lid guard launch command (regression: silent no-op)
+
+    /// The guard lives under `~/Library/Application Support/SleepSkip/`, which contains a space.
+    /// Before this was quoted, `do shell script` split the path, the script never ran, and the
+    /// command still exited 0 — the UI reported success while lid sleep was never disabled.
+    func testClosedLidLaunchScriptQuotesPathsWithSpaces() {
+        let script = "/Users/me/Library/Application Support/SleepSkip/lid-guard.sh"
+        let pid = script + ".pid"
+        let command = CommandBuilder.closedLidLaunchScript(scriptPath: script, pidPath: pid)
+
+        XCTAssertTrue(command.contains("'/Users/me/Library/Application Support/SleepSkip/lid-guard.sh'"))
+        XCTAssertTrue(command.contains("'/Users/me/Library/Application Support/SleepSkip/lid-guard.sh.pid'"))
+        // An unquoted path would leave a bare `Application` token in the command.
+        XCTAssertFalse(command.contains("/bin/sh /Users/me/Library/Application "))
+    }
+
+    func testShellSingleQuotingEscapesEmbeddedApostrophes() {
+        XCTAssertEqual(CommandBuilder.shellSingleQuoted("/tmp/plain"), "'/tmp/plain'")
+        XCTAssertEqual(CommandBuilder.shellSingleQuoted("/tmp/it's"), "'/tmp/it'\\''s'")
+        XCTAssertEqual(CommandBuilder.shellSingleQuoted(""), "''")
+    }
+
+    /// End-to-end check that the quoted form actually runs the script. Uses /bin/sh directly, so
+    /// it exercises the same parsing `do shell script` performs without needing authorization.
+    func testClosedLidLaunchScriptActuallyRunsTheGuard() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SleepSkip Test \(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let marker = dir.appendingPathComponent("ran.txt")
+        let scriptURL = dir.appendingPathComponent("lid-guard.sh")
+        try "#!/bin/sh\necho ok > \(CommandBuilder.shellSingleQuoted(marker.path))\n"
+            .write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
+
+        let command = CommandBuilder.closedLidLaunchScript(
+            scriptPath: scriptURL.path,
+            pidPath: scriptURL.path + ".pid"
+        )
+        let shell = Process()
+        shell.executableURL = URL(fileURLWithPath: "/bin/sh")
+        shell.arguments = ["-c", command]
+        try shell.run()
+        shell.waitUntilExit()
+
+        // The guard is backgrounded, so give it a moment to write the marker.
+        let deadline = Date().addingTimeInterval(2)
+        while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
+            usleep(50_000)
+        }
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: marker.path),
+            "quoted launch command did not execute the guard script"
+        )
+    }
+
+    // MARK: - Auto-follow release (regression: assertion held after agents go quiet)
+
+    private func makeManager(
+        caf: MockCaffeinateRunner,
+        bag: MockBackpackGuard = MockBackpackGuard(),
+        notif: MockNotifier = MockNotifier(),
+        now: @escaping () -> Date = { Date() }
+    ) throws -> (SessionManager, UserDefaults, String) {
+        let suiteName = "io.github.laiyongqiang.SleepSkip.af.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let manager = SessionManager(
+            store: PreferencesStore(defaults: defaults),
+            caffeinateRunner: caf,
+            backpackGuard: bag,
+            powerMonitor: MockPowerMonitor(),
+            screenLocker: MockScreenLocker(),
+            notifier: notif,
+            loginItem: MockLoginItem(),
+            nowProvider: now,
+            checkStaleSleepOnInit: false
+        )
+        return (manager, defaults, suiteName)
+    }
+
+    /// `beginAutoFollow` sets `isRunning`, so guarding on `isRunning` alone made the first
+    /// `.active` swallow every later transition, including `.inactive`.
+    func testAutoFollowReleasesWhenAgentsGoQuiet() throws {
+        let caf = MockCaffeinateRunner()
+        let (manager, defaults, suite) = try makeManager(caf: caf)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        manager.setAutoFollowEnabled(true)
+        manager.handleAgentActivity(.active(agents: ["Claude Code"], since: Date()))
+        XCTAssertTrue(manager.isRunning, "auto-follow should start a session")
+        XCTAssertTrue(manager.isFollowingAgents)
+
+        manager.handleAgentActivity(.inactive)
+        XCTAssertFalse(manager.isRunning, "auto-follow must release once the agents go quiet")
+        XCTAssertFalse(manager.isFollowingAgents)
+        XCTAssertEqual(caf.stopCount, 1)
+    }
+
+    func testAutoFollowDoesNotOverrideAManualSession() throws {
+        let caf = MockCaffeinateRunner()
+        let (manager, defaults, suite) = try makeManager(caf: caf)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        manager.setAutoFollowEnabled(true)
+        manager.startConfiguredSession()
+        XCTAssertTrue(manager.isRunning)
+        let startsAfterManual = caf.startCount
+
+        manager.handleAgentActivity(.active(agents: ["Claude Code"], since: Date()))
+        XCTAssertEqual(caf.startCount, startsAfterManual, "a manual session must not be re-launched by auto-follow")
+        XCTAssertFalse(manager.isFollowingAgents)
+
+        manager.handleAgentActivity(.inactive)
+        XCTAssertTrue(manager.isRunning, "a manual session must survive agents going quiet")
+    }
+
+    /// The hard ceiling must actually stop holding, not re-arm a second later.
+    func testAutoFollowLimitSuppressesUntilAgentsGoQuiet() throws {
+        let caf = MockCaffeinateRunner()
+        let (manager, defaults, suite) = try makeManager(caf: caf)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        manager.setAutoFollowEnabled(true)
+        manager.handleAgentActivity(.active(agents: ["Claude Code"], since: Date()))
+        XCTAssertTrue(manager.isRunning)
+
+        manager.handleAutoFollowLimitReached()
+        XCTAssertFalse(manager.isRunning, "the ceiling must release the assertion")
+        XCTAssertTrue(manager.autoFollowLimitReached)
+
+        // The monitor keeps reporting `.active` for a still-writing agent; that must not re-arm.
+        manager.handleAgentActivity(.active(agents: ["Claude Code"], since: Date()))
+        XCTAssertFalse(manager.isRunning, "the ceiling must hold until the agents go quiet")
+
+        // Once quiet, the suppression clears and a fresh detection can follow again.
+        manager.handleAgentActivity(.inactive)
+        manager.handleAgentActivity(.active(agents: ["Claude Code"], since: Date()))
+        XCTAssertTrue(manager.isRunning)
+    }
+
+    // MARK: - Authorization race
+
+    /// Stopping while Touch ID is pending used to launch the session anyway when the prompt
+    /// returned, because the completion only compared its token.
+    func testStoppingDuringAuthorizationCancelsTheLaunch() throws {
+        let caf = MockCaffeinateRunner()
+        let bag = MockBackpackGuard()
+        let (manager, defaults, suite) = try makeManager(caf: caf, bag: bag)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        manager.setAllowClosedLid(true)
+        manager.startConfiguredSession()
+        XCTAssertTrue(manager.isAuthorizing)
+        XCTAssertEqual(bag.enableCalls, 1)
+
+        manager.stopSession(reason: .manual)
+        XCTAssertFalse(manager.isAuthorizing)
+
+        // The mock completes synchronously inside `enable`, so a session that launched would
+        // already be running; assert the stop was not undone.
+        XCTAssertFalse(manager.isRunning)
+        XCTAssertEqual(caf.startCount, 0)
+    }
 }
 #endif

@@ -101,13 +101,15 @@ final class BackpackGuard: BackpackGuarding {
 
         DispatchQueue.global(qos: .userInitiated).async {
             var errorDict: NSDictionary?
-            let source = "do shell script \"nohup /bin/sh \(scriptURL.path) >/dev/null 2>&1 & echo $! > \(Self.pidPath)\" with administrator privileges"
+            let command = CommandBuilder.closedLidLaunchScript(
+                scriptPath: scriptURL.path,
+                pidPath: Self.pidPath
+            )
+            let source = "do shell script \"\(command)\" with administrator privileges"
             let result = NSAppleScript(source: source)?.executeAndReturnError(&errorDict)
 
-            DispatchQueue.main.async {
-                if result != nil {
-                    completion(.success(()))
-                } else {
+            guard result != nil else {
+                DispatchQueue.main.async {
                     self.disable()
                     let code = (errorDict?[NSAppleScript.errorNumber] as? Int) ?? -1
                     let msg = (errorDict?[NSAppleScript.errorMessage] as? String) ?? "Authorization failed"
@@ -115,6 +117,42 @@ final class BackpackGuard: BackpackGuarding {
                         NSLocalizedDescriptionKey: msg
                     ])))
                 }
+                return
+            }
+
+            // `do shell script` exits 0 as long as the shell itself succeeded, which says nothing
+            // about whether `pmset` actually took effect (MDM policy, a pmset change, or a script
+            // that never launched all still exit 0). Read the real state back before reporting
+            // success, so the UI cannot claim "Backpack running" while lid sleep is still enabled.
+            self.verifySleepDisabled(retriesRemaining: 10) { verified in
+                DispatchQueue.main.async {
+                    if verified {
+                        completion(.success(()))
+                    } else {
+                        self.disable()
+                        completion(.failure(NSError(domain: "SleepSkip.BackpackGuard", code: -2, userInfo: [
+                            NSLocalizedDescriptionKey: "Lid-close sleep was not disabled. The guard may have been blocked by a system policy."
+                        ])))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Polls `SleepDisabled` until it reads 1 or the retries run out.
+    ///
+    /// The guard script disables sleep asynchronously, so an immediate read can race it. Ten
+    /// attempts 200 ms apart give it 2 s, which is far longer than the script needs.
+    private func verifySleepDisabled(retriesRemaining: Int, completion: @escaping (Bool) -> Void) {
+        checkSleepDisabledAsync { disabled in
+            if disabled {
+                completion(true)
+            } else if retriesRemaining > 0 {
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.2) {
+                    self.verifySleepDisabled(retriesRemaining: retriesRemaining - 1, completion: completion)
+                }
+            } else {
+                completion(false)
             }
         }
     }
@@ -135,13 +173,30 @@ final class BackpackGuard: BackpackGuarding {
             try? FileManager.default.removeItem(atPath: pidPath)
             return
         }
-        // The pid file survives restarts, so verify it still belongs to our script before signalling.
-        var buffer = [CChar](repeating: 0, count: 4096)
-        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
-        if length > 0, String(cString: buffer).hasSuffix("lid-guard.sh") {
+        // The pid file survives restarts, so verify it still belongs to our script before
+        // signalling. `proc_pidpath` reports the *executable*, which for `sh script.sh` is
+        // `/bin/bash` or `/bin/sh` — never the script — so match on the command line instead.
+        if isOurGuardScript(pid: pid) {
             kill(pid, SIGTERM)
         }
         try? FileManager.default.removeItem(atPath: pidPath)
+    }
+
+    /// True when `pid` is a live process whose arguments name our guard script.
+    ///
+    /// `proc_pidpath` reports the *executable*, which for `sh script.sh` is `/bin/bash` — never
+    /// the script — so the old `hasSuffix("lid-guard.sh")` check was always false and the safety
+    /// net never fired. The script path only appears in argv; see `ProcessArguments`.
+    static func isOurGuardScript(pid: Int32) -> Bool {
+        guard pid > 0 else { return false }
+
+        var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        if proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count)) > 0 {
+            // Fast path: the kernel ran the script directly via its shebang.
+            if String(cString: pathBuffer).hasSuffix("lid-guard.sh") { return true }
+        }
+
+        return ProcessArguments.mentions(pid: pid, scriptName: "lid-guard.sh")
     }
 
     func checkSleepDisabledAsync(completion: @escaping (Bool) -> Void) {
@@ -170,15 +225,45 @@ final class BackpackGuard: BackpackGuarding {
             var errorDict: NSDictionary?
             let script = NSAppleScript(source: "do shell script \"/usr/bin/pmset -a disablesleep 0\" with administrator privileges")
             let result = script?.executeAndReturnError(&errorDict)
-            DispatchQueue.main.async {
-                if result != nil {
-                    completion(.success(()))
-                } else {
+
+            guard result != nil else {
+                DispatchQueue.main.async {
                     let msg = (errorDict?[NSAppleScript.errorMessage] as? String) ?? "Failed to restore normal sleep"
                     completion(.failure(NSError(domain: "SleepSkip.BackpackGuard", code: -1, userInfo: [
                         NSLocalizedDescriptionKey: msg
                     ])))
                 }
+                return
+            }
+
+            // Same reasoning as `enable`: an exit code of 0 only means the shell ran. Leaving
+            // `disablesleep 1` behind is the worse failure of the two, so confirm it actually
+            // cleared rather than reporting success on the shell's word alone.
+            self.verifySleepEnabled(retriesRemaining: 10) { restored in
+                DispatchQueue.main.async {
+                    if restored {
+                        completion(.success(()))
+                    } else {
+                        completion(.failure(NSError(domain: "SleepSkip.BackpackGuard", code: -3, userInfo: [
+                            NSLocalizedDescriptionKey: "Normal sleep could not be restored. Run `sudo pmset -a disablesleep 0` manually."
+                        ])))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Polls `SleepDisabled` until it reads 0 or the retries run out.
+    private func verifySleepEnabled(retriesRemaining: Int, completion: @escaping (Bool) -> Void) {
+        checkSleepDisabledAsync { disabled in
+            if !disabled {
+                completion(true)
+            } else if retriesRemaining > 0 {
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.2) {
+                    self.verifySleepEnabled(retriesRemaining: retriesRemaining - 1, completion: completion)
+                }
+            } else {
+                completion(false)
             }
         }
     }

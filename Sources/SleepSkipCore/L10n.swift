@@ -106,7 +106,7 @@ public struct L10n {
     public func invalidDurationError(_ maxMinutes: Double) -> String {
         let maxDays = Int(maxMinutes / 60 / 24)
         return isZh
-            ? "请输入 1 到 \(maxDays) 天之间的有效时长"
+            ? "请输入 1 分钟到 \(maxDays) 天之间的有效时长"
             : "Enter a valid duration between 1 minute and \(maxDays) days"
     }
 
