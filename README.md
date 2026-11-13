@@ -1,6 +1,6 @@
 # SleepSkip · 惜眠
 
-**Zero wakeups. Zero wasted watts.** — an ultra-lightweight macOS menu bar & CLI keep-awake utility built for Vibe Coding & AI Agents.
+**No timers. No polling. No wasted watts.** — an ultra-lightweight macOS menu bar & CLI keep-awake utility built for Vibe Coding & AI Agents.
 
 [中文文档](README_CN.md) · [Product Spec (PRD)](docs/PRD.md)
 
@@ -23,10 +23,10 @@ The name says it twice: **skip** the sleep your Mac doesn't need, and **spare** 
 Traditional keep-awake tools were designed a decade ago to keep screens lit while reading or presenting. In the AI Agent era, most workflows run headless in the background while your MacBook travels in a sleeve, tethers to a phone hotspot, or sits locked on battery.
 
 SleepSkip is built around first principles:
-- **0.0% Idle CPU**: Powered directly by macOS native `/usr/bin/caffeinate`. The 1Hz countdown timer exists **only** while the popover is open; once closed, zero timers or background polls run.
+- **No timers, no polling, while the panel is closed**: Powered directly by macOS native `/usr/bin/caffeinate`. The 1Hz countdown timer exists **only** while the popover is open. [Measured](docs/PERFORMANCE.md): 0.09–0.24 ms of CPU per 120 s idle — the same order as a menu bar app that does nothing but draw its icon.
 - **Zero Orphan Processes**: Every `caffeinate` assertion is bound via `-w <PID>`. Even if force-quit, the kernel immediately tears down child assertions.
 - **Remembered Config + One-Keystroke Launch**: Remembers your last mode, duration, and lock preference. Open the popover and hit `Enter` to start immediately; hit `Enter` or `Esc` to dismiss.
-- **CLI Companion (`sleepskip -- <cmd>`)**: Wrap any AI Agent or build command so your Mac stays awake strictly until the task completes, synced passively via kernel `kqueue` events (`0.0%` CPU).
+- **CLI Companion (`sleepskip -- <cmd>`)**: Wrap any AI Agent or build command so your Mac stays awake strictly until the task completes, synced passively via kernel `kqueue` events (measured: 10 ms of CPU across a 10 s task).
 - **URL Scheme Automation**: Control sessions from Raycast, Alfred, or Apple Shortcuts via `sleepskip://`.
 - **Two Clean, Purpose-Built Modes**:
   - **Background** (`caffeinate -i`, default): Prevents idle sleep while turning off the screen to save battery. Includes optional **Lock on Start** and opt-in **Lid-Closed Backpack Mode**.
@@ -48,7 +48,7 @@ sudo ln -sf /Applications/SleepSkip.app/Contents/MacOS/SleepSkip /usr/local/bin/
 Usage:
 
 ```bash
-# Keep Mac awake until Codex finishes (0% background polling)
+# Keep Mac awake until Codex finishes (poll-free: event-driven)
 sleepskip -- codex "refactor auth module"
 
 # Keep display on for a Computer Use run, then lock screen when done
@@ -64,6 +64,24 @@ URL Scheme (`Raycast` / `Alfred` / `Shortcuts`):
 - `sleepskip://stop`
 - `sleepskip://toggle`
 - `sleepskip://lock`
+
+---
+
+## Measured Resource Usage
+
+Numbers are reproducible with `swift scripts/bench_idle.swift "$(pgrep -x SleepSkip)" 120`;
+the full methodology and the rejected alternatives are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
+| State | CPU per 120 s | Forced wakeups |
+| :--- | ---: | ---: |
+| Idle, panel closed | 0.09–0.24 ms | 3–11 |
+| Auto-follow on, agents writing | 0.73 ms / 180 s | 12 |
+| Panel open (1 Hz countdown) | 1.3 ms / 60 s | ~60 |
+
+For reference, an **empty** AppKit app that only draws a status bar icon idles at 0.035–0.142 ms
+per 120 s. SleepSkip sits in the same range — its own logic adds no measurable overhead on top of
+what macOS imposes on any menu bar app. That is also why the claim is "no timers and no polling"
+rather than "zero wakeups": no status-item app can honestly promise the latter.
 
 ---
 
