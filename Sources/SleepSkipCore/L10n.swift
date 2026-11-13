@@ -147,15 +147,15 @@ public struct L10n {
     public var autoFollowLabel: String { isZh ? "自动跟随 AI Agent" : "Follow AI Agents" }
     public var autoFollowDetail: String {
         isZh
-            ? "检测到 Claude Code / Codex 在写会话文件时自动保持唤醒，停止后自动释放。只监听文件是否变化，不读取内容，不上传任何数据。"
-            : "Hold sleep off while Claude Code / Codex write to their session files, then release. Only file changes are observed — contents are never read or uploaded."
+            ? "检测到 Claude Code / Codex / DeepSeek Harness 在写会话文件时自动保持唤醒，停止后自动释放。只监听文件是否变化，不读取内容，不上传任何数据。"
+            : "Hold sleep off while Claude Code, Codex or DeepSeek Harness write to their session files, then release. Only file changes are observed — contents are never read or uploaded."
     }
     public var autoFollowWatching: String { isZh ? "监听目录" : "Watching" }
     public var autoFollowNoticeTitle: String { isZh ? "已开启自动跟随" : "Auto-follow is on" }
     public var autoFollowNoticeBody: String {
         isZh
-            ? "Claude Code / Codex 开始干活时自动保持唤醒，停下后自动释放。只监听 ~/.claude/projects 和 ~/.codex/sessions 里文件有没有变化，不读取内容、不上传任何数据。可在偏好设置里关闭。"
-            : "SleepSkip keeps your Mac awake while Claude Code / Codex work, then releases on its own. It only watches whether files under ~/.claude/projects and ~/.codex/sessions change — contents are never read or uploaded. Turn it off in Preferences."
+            ? "Claude Code / Codex / DeepSeek Harness 开始干活时自动保持唤醒，停下后自动释放。只监听它们的会话目录里文件有没有变化，不读取内容、不上传任何数据。可在偏好设置里关闭。"
+            : "SleepSkip keeps your Mac awake while Claude Code, Codex or DeepSeek Harness work, then releases on its own. It only watches whether files in their session folders change — contents are never read or uploaded. Turn it off in Preferences."
     }
     public var autoFollowUnavailable: String {
         isZh ? "未检测到支持的 Agent 目录" : "No supported agent directory found"
@@ -166,6 +166,7 @@ public struct L10n {
             switch name {
             case "claude-code": return "Claude Code"
             case "codex": return "Codex"
+            case "dsh": return "DeepSeek Harness"
             default: return name
             }
         }

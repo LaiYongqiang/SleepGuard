@@ -94,8 +94,25 @@ final class AgentActivityTests: XCTestCase {
     func testDefaultSourcesPointAtTranscriptDirectories() {
         let home = URL(fileURLWithPath: "/Users/example")
         let sources = AgentSource.defaults(homeDirectory: home)
-        XCTAssertEqual(sources.map(\.id), ["claude-code", "codex"])
+        XCTAssertEqual(sources.map(\.id), ["claude-code", "codex", "dsh"])
         XCTAssertEqual(sources[0].path, "/Users/example/.claude/projects")
+        XCTAssertEqual(sources[2].path, "/Users/example/.dsh/sessions")
+    }
+
+    func testTranscriptSuffixesArePerSource() {
+        let home = URL(fileURLWithPath: "/Users/example")
+        let sources = AgentSource.defaults(homeDirectory: home)
+        let claude = sources[0]
+        let dsh = sources[2]
+
+        // DSH writes compressed transcripts, so a plain `.jsonl` check would miss it entirely.
+        XCTAssertTrue(dsh.matches(filePath: "/Users/example/.dsh/sessions/p/session.v4.jsonl.zstd"))
+        XCTAssertTrue(dsh.matches(filePath: "/Users/example/.dsh/sessions/p/s.jsonl"))
+        XCTAssertFalse(claude.matches(filePath: "/Users/example/.claude/projects/p/s.jsonl.zstd"))
+        XCTAssertTrue(claude.matches(filePath: "/Users/example/.claude/projects/p/s.jsonl"))
+
+        // A sibling directory sharing the prefix must not be attributed to the source.
+        XCTAssertFalse(dsh.matches(filePath: "/Users/example/.dsh/sessions-old/s.jsonl"))
     }
 }
 #endif

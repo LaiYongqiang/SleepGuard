@@ -317,8 +317,16 @@ struct VerifyRunner {
 
         // Default sources point at transcript directories under the home folder.
         let sources = AgentSource.defaults(homeDirectory: URL(fileURLWithPath: "/Users/example"))
-        expect(sources.map(\.id) == ["claude-code", "codex"], "Default agent sources")
+        expect(sources.map(\.id) == ["claude-code", "codex", "dsh"], "Default agent sources")
         expect(sources[0].path == "/Users/example/.claude/projects", "Claude transcript path")
+        expect(sources[2].path == "/Users/example/.dsh/sessions", "DSH transcript path")
+
+        // Per-source transcript extensions: DSH compresses its transcripts.
+        let dsh = sources[2]
+        expect(dsh.matches(filePath: "/Users/example/.dsh/sessions/p/session.v4.jsonl.zstd"), "DSH .zstd transcripts match")
+        expect(!sources[0].matches(filePath: "/Users/example/.claude/projects/p/session.v4.jsonl.zstd"), "Claude ignores .zstd")
+        expect(sources[0].matches(filePath: "/Users/example/.claude/projects/p/s.jsonl"), "Claude matches .jsonl")
+        expect(!dsh.matches(filePath: "/Users/example/.dsh/sessions-old/s.jsonl"), "Prefix collision rejected")
 
         // 5. Live caffeinate -w lifecycle check
         let sentinel = Process()

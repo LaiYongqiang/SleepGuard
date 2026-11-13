@@ -8,11 +8,21 @@ public struct AgentSource: Equatable, Sendable {
     public let displayName: String
     /// Directory that receives transcript writes while the agent works.
     public let path: String
+    /// Filename suffixes that count as a transcript write. Agents differ: Claude Code and Codex
+    /// append plain `.jsonl`, while DSH writes compressed `session.v4.jsonl.zstd`.
+    public let fileSuffixes: [String]
 
-    public init(id: String, displayName: String, path: String) {
+    public init(id: String, displayName: String, path: String, fileSuffixes: [String] = [".jsonl"]) {
         self.id = id
         self.displayName = displayName
         self.path = path
+        self.fileSuffixes = fileSuffixes
+    }
+
+    /// True when `path` looks like one of this source's transcript files.
+    public func matches(filePath: String) -> Bool {
+        guard filePath.hasPrefix(path + "/") else { return false }
+        return fileSuffixes.contains { filePath.hasSuffix($0) }
     }
 
     /// Sources discovered on this machine. Missing directories are skipped by the monitor.
@@ -27,6 +37,13 @@ public struct AgentSource: Equatable, Sendable {
                 id: "codex",
                 displayName: "Codex",
                 path: homeDirectory.appendingPathComponent(".codex/sessions").path
+            ),
+            AgentSource(
+                id: "dsh",
+                displayName: "DeepSeek Harness",
+                path: homeDirectory.appendingPathComponent(".dsh/sessions").path,
+                // DSH compresses its transcripts, so the extension is not `.jsonl`.
+                fileSuffixes: [".jsonl.zstd", ".jsonl"]
             ),
         ]
     }
