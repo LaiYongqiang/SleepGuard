@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 import IOKit.ps
 import ServiceManagement
-import SleepGuardCore
+import SleepSkipCore
 import UserNotifications
 
 final class CaffeinateRunner: CaffeinateRunning {
@@ -88,7 +88,7 @@ final class BackpackGuard: BackpackGuarding {
                     self.disable()
                     let code = (errorDict?[NSAppleScript.errorNumber] as? Int) ?? -1
                     let msg = (errorDict?[NSAppleScript.errorMessage] as? String) ?? "Authorization failed"
-                    completion(.failure(NSError(domain: "SleepGuard.BackpackGuard", code: code, userInfo: [
+                    completion(.failure(NSError(domain: "SleepSkip.BackpackGuard", code: code, userInfo: [
                         NSLocalizedDescriptionKey: msg
                     ])))
                 }
@@ -134,7 +134,7 @@ final class BackpackGuard: BackpackGuarding {
                     completion(.success(()))
                 } else {
                     let msg = (errorDict?[NSAppleScript.errorMessage] as? String) ?? "Failed to restore normal sleep"
-                    completion(.failure(NSError(domain: "SleepGuard.BackpackGuard", code: -1, userInfo: [
+                    completion(.failure(NSError(domain: "SleepSkip.BackpackGuard", code: -1, userInfo: [
                         NSLocalizedDescriptionKey: msg
                     ])))
                 }
@@ -271,7 +271,7 @@ final class NativeNotifier: UserNotifying {
         content.body = body
         content.sound = .default
         let request = UNNotificationRequest(
-            identifier: "io.github.laiyongqiang.SleepGuard.\(UUID().uuidString)",
+            identifier: "io.github.laiyongqiang.SleepSkip.\(UUID().uuidString)",
             content: content,
             trigger: nil
         )

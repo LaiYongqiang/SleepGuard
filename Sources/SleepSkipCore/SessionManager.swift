@@ -60,6 +60,16 @@ public final class SessionManager: ObservableObject {
     @Published public var launchAtLogin: Bool = false
     @Published public var externalCLI: ExternalCLISession? = nil
 
+    /// True while a detected agent is holding the assertion on the user's behalf.
+    @Published public var isFollowingAgents: Bool = false
+    /// Agents currently driving the automatic session, for display.
+    @Published public var followingAgents: [String] = []
+    /// True once an automatic session hit its hard ceiling; the next detection starts fresh.
+    @Published public var autoFollowLimitReached: Bool = false
+    /// Set after the user stops a session while agents are still writing, so the Mac does not
+    /// immediately wake itself again. Cleared once all agents have gone quiet.
+    private var autoFollowSuppressed = false
+
     private let store: PreferencesStore
     private let caffeinateRunner: CaffeinateRunning
     private let backpackGuard: BackpackGuarding
@@ -68,9 +78,13 @@ public final class SessionManager: ObservableObject {
     private let notifier: UserNotifying
     private let loginItem: LoginItemControlling
     private let nowProvider: () -> Date
+    /// Exposed so the host can hand it to the FSEvents monitor.
+    public let agentTracker: AgentActivityTracker
 
     public var onStateChange: ((_ active: Bool, _ closedLid: Bool) -> Void)?
     public var onRequestClosePopover: (() -> Void)?
+    /// Called when auto-follow starts or stops so the host can start/stop the FSEvents monitor.
+    public var onAutoFollowToggled: ((_ enabled: Bool) -> Void)?
 
     public var l10n: L10n {
         L10n(language: config.language)
@@ -78,6 +92,100 @@ public final class SessionManager: ObservableObject {
 
     public var isEffectivelyActive: Bool {
         isRunning || externalCLI != nil
+    }
+
+    public var isAutoFollowEnabled: Bool {
+        config.autoFollowAgents
+    }
+
+    /// Starts or stops watching for agent activity. The monitor itself is owned by the host
+    /// so the core stays free of FSEvents; this only flips the preference and notifies.
+    public func setAutoFollowEnabled(_ enabled: Bool) {
+        guard config.autoFollowAgents != enabled else { return }
+        config.autoFollowAgents = enabled
+        autoFollowSuppressed = false
+        persistConfig()
+        if !enabled {
+            endAutoFollow()
+        }
+        onAutoFollowToggled?(enabled)
+        onStateChange?(isEffectivelyActive, activeClosedLid)
+    }
+
+    /// Called by the monitor on every display-relevant transition.
+    public func handleAgentActivity(_ state: AgentActivityState) {
+        guard config.autoFollowAgents else { return }
+
+        // Re-arm only after the agents have actually gone quiet.
+        if autoFollowSuppressed {
+            if state == .inactive { autoFollowSuppressed = false }
+            return
+        }
+
+        // A manual session always wins; auto-follow never overrides it.
+        guard !isRunning else { return }
+
+        if agentTracker.shouldHoldAssertion(for: state) {
+            switch state {
+            case .active(let agents, _):
+                followingAgents = agents
+            case .grace:
+                break
+            case .inactive:
+                break
+            }
+            if !isFollowingAgents {
+                beginAutoFollow()
+            }
+        } else if isFollowingAgents {
+            endAutoFollow()
+        }
+    }
+
+    private func beginAutoFollow() {
+        guard !isRunning else { return }
+        // Auto-follow is background-only and never enables closed-lid mode: that stays manual.
+        let timeout = CommandBuilder.timeoutSeconds(forMinutes: config.durationMinutes)
+        do {
+            try caffeinateRunner.start(mode: .background, timeoutSeconds: timeout) { [weak self] in
+                self?.handleCaffeinateExited()
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        activeMode = .background
+        activeClosedLid = false
+        isIndefinite = (timeout == nil)
+        initialMinutes = config.durationMinutes
+        endDate = timeout.map { nowProvider().addingTimeInterval(TimeInterval($0)) }
+        isFollowingAgents = true
+        autoFollowLimitReached = false
+        isRunning = true
+        startPowerWatch()
+        onStateChange?(isEffectivelyActive, false)
+    }
+
+    private func endAutoFollow() {
+        guard isFollowingAgents else { return }
+        isFollowingAgents = false
+        followingAgents = []
+        if isRunning {
+            stopSession(reason: .silent)
+        }
+        onStateChange?(isEffectivelyActive, false)
+    }
+
+    /// The hard ceiling was hit: release now and require a fresh detection before holding again.
+    public func handleAutoFollowLimitReached() {
+        autoFollowLimitReached = true
+        endAutoFollow()
+        notifier.send(title: l10n.notifAutoFollowLimitTitle, body: l10n.notifAutoFollowLimitBody)
+    }
+
+    public func resetAutoFollowLimit() {
+        autoFollowLimitReached = false
+        agentTracker.reset()
     }
 
     public init(
@@ -89,6 +197,7 @@ public final class SessionManager: ObservableObject {
         notifier: UserNotifying,
         loginItem: LoginItemControlling,
         nowProvider: @escaping () -> Date = { Date() },
+        agentPolicy: AgentActivityPolicy = .default,
         checkStaleSleepOnInit: Bool = true
     ) {
         self.store = store
@@ -99,6 +208,7 @@ public final class SessionManager: ObservableObject {
         self.notifier = notifier
         self.loginItem = loginItem
         self.nowProvider = nowProvider
+        self.agentTracker = AgentActivityTracker(policy: agentPolicy, nowProvider: nowProvider)
 
         let loaded = store.load()
         self.config = loaded
@@ -132,12 +242,16 @@ public final class SessionManager: ObservableObject {
 
     public func applyCustomDuration() {
         let trimmed = customMinutesText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let val = Double(trimmed), val > 0 else {
+        // `Double("inf")` and `Double("1e999")` parse to infinity; sanitize before persisting so a
+        // bad value can never reach Int(_:) in the countdown or the caffeinate timeout.
+        guard let parsed = Double(trimmed), let val = CommandBuilder.sanitizeMinutes(parsed) else {
+            errorMessage = l10n.invalidDurationError(CommandBuilder.maxDurationMinutes)
             return
         }
         config.customMinutes = val
         config.durationMinutes = val
         showCustomInput = false
+        errorMessage = nil
         persistConfig()
     }
 
@@ -339,6 +453,13 @@ public final class SessionManager: ObservableObject {
         caffeinateRunner.stop()
         backpackGuard.disable()
 
+        // A user-initiated stop while agents are still writing should stay stopped; only a fresh
+        // quiet period re-arms auto-follow.
+        if reason == .manual, config.autoFollowAgents {
+            autoFollowSuppressed = true
+        }
+        isFollowingAgents = false
+        followingAgents = []
         isRunning = false
         activeClosedLid = false
         endDate = nil

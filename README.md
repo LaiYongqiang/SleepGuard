@@ -1,10 +1,12 @@
-# SleepGuard
+# SleepSkip · 惜眠
 
-**Ultra-lightweight macOS menu bar & CLI keep-awake utility built for Vibe Coding & AI Agents.**
+**Zero wakeups. Zero wasted watts.** — an ultra-lightweight macOS menu bar & CLI keep-awake utility built for Vibe Coding & AI Agents.
 
 [中文文档](README_CN.md) · [Product Spec (PRD)](docs/PRD.md)
 
-> Keep your battery and thermals dedicated to **Codex CLI, Claude Code, builds, servers, and AI Agents** — not an idle illuminated screen.
+> Defer sleep until your agents are done. Keep your battery and thermals dedicated to **Codex CLI, Claude Code, builds, servers, and AI Agents** — not an idle illuminated screen.
+
+The name says it twice: **skip** the sleep your Mac doesn't need, and **spare** the battery you can't afford to waste. In Chinese it is **惜眠** — "cherish sleep": spend it sparingly.
 
 ---
 
@@ -16,21 +18,22 @@
 
 ---
 
-## Why SleepGuard?
+## Why SleepSkip?
 
 Traditional keep-awake tools were designed a decade ago to keep screens lit while reading or presenting. In the AI Agent era, most workflows run headless in the background while your MacBook travels in a sleeve, tethers to a phone hotspot, or sits locked on battery.
 
-SleepGuard is built around first principles:
+SleepSkip is built around first principles:
 - **0.0% Idle CPU**: Powered directly by macOS native `/usr/bin/caffeinate`. The 1Hz countdown timer exists **only** while the popover is open; once closed, zero timers or background polls run.
 - **Zero Orphan Processes**: Every `caffeinate` assertion is bound via `-w <PID>`. Even if force-quit, the kernel immediately tears down child assertions.
 - **Remembered Config + One-Keystroke Launch**: Remembers your last mode, duration, and lock preference. Open the popover and hit `Enter` to start immediately; hit `Enter` or `Esc` to dismiss.
-- **CLI Companion (`sleepguard -- <cmd>`)**: Wrap any AI Agent or build command so your Mac stays awake strictly until the task completes, synced passively via kernel `kqueue` events (`0.0%` CPU).
-- **URL Scheme Automation**: Control sessions from Raycast, Alfred, or Apple Shortcuts via `sleepguard://`.
+- **CLI Companion (`sleepskip -- <cmd>`)**: Wrap any AI Agent or build command so your Mac stays awake strictly until the task completes, synced passively via kernel `kqueue` events (`0.0%` CPU).
+- **URL Scheme Automation**: Control sessions from Raycast, Alfred, or Apple Shortcuts via `sleepskip://`.
 - **Two Clean, Purpose-Built Modes**:
   - **Background** (`caffeinate -i`, default): Prevents idle sleep while turning off the screen to save battery. Includes optional **Lock on Start** and opt-in **Lid-Closed Backpack Mode**.
   - **Keep Display On** (`caffeinate -di`): Keeps both system and WindowServer display rendering active — the reliable native mode for **Computer Use** (`ScreenCaptureKit` / GUI agents) and presentations. *(Tip: lower screen brightness to minimum when running Computer Use unattended.)*
 - **Optional Lid-Closed Backpack Mode**: Explicit opt-in with standard macOS Touch ID / admin authorization (`pmset -a disablesleep 1`), protected by a kernel `kqueue` + `trap` watchdog that automatically restores normal sleep (`disablesleep 0`) on stop, timeout, or app termination.
 - **Event-Driven Power Protection**: Pre-flight + `IOKit.ps` `IOPSNotificationCreateRunLoopSource` callbacks for optional **Low-Battery Cutoff** (`5%`–`20%`) and **Stop When Unplugged** (zero polling), delivered via native macOS notifications only on passive stops.
+- **Auto-Follow AI Agents** (opt-in, off by default): FSEvents watches the agents' transcript folders (`~/.claude/projects`, `~/.codex/sessions`) and holds sleep off exactly while they write, releasing after a 5-minute grace period. Measured cost is **~0.2 ms of CPU per 20 seconds** with zero forced wakeups — process polling was measured at ~160 ms/30 s plus one wakeup per second, and rejected. Only file changes are observed; transcript contents are never read. A manual session always wins, and a 2-hour hard ceiling prevents an accidental all-nighter.
 
 ---
 
@@ -39,47 +42,48 @@ SleepGuard is built around first principles:
 Link the bundled CLI binary once:
 
 ```bash
-sudo ln -sf /Applications/SleepGuard.app/Contents/MacOS/SleepGuard /usr/local/bin/sleepguard
+sudo ln -sf /Applications/SleepSkip.app/Contents/MacOS/SleepSkip /usr/local/bin/sleepskip
 ```
 
 Usage:
 
 ```bash
 # Keep Mac awake until Codex finishes (0% background polling)
-sleepguard -- codex "refactor auth module"
+sleepskip -- codex "refactor auth module"
 
 # Keep display on for a Computer Use run, then lock screen when done
-sleepguard --display --lock -- python agent.py
+sleepskip --display --lock -- python agent.py
 
 # Watch an already-running process by PID
-sleepguard watch 12345 --lock
+sleepskip watch 12345 --lock
 ```
 
 URL Scheme (`Raycast` / `Alfred` / `Shortcuts`):
-- `sleepguard://start?mode=background&minutes=240&lock=1`
-- `sleepguard://start?mode=display&minutes=60&lock=0`
-- `sleepguard://stop`
-- `sleepguard://toggle`
-- `sleepguard://lock`
+- `sleepskip://start?mode=background&minutes=240&lock=1`
+- `sleepskip://start?mode=display&minutes=60&lock=0`
+- `sleepskip://stop`
+- `sleepskip://toggle`
+- `sleepskip://lock`
 
 ---
 
 ## Installation & Build
 
-### Homebrew (Recommended — installs both App & `sleepguard` CLI)
+### Homebrew (Recommended — installs both App & `sleepskip` CLI)
 
 ```bash
-brew install --cask --no-quarantine laiyongqiang/tap/sleepguard
+brew install --cask laiyongqiang/tap/sleepskip
 ```
 
-*(On Homebrew 7+, run `brew trust laiyongqiang/tap` once if prompted for third-party tap trust.)*
+Homebrew installs `SleepSkip.app` into `/Applications` and links the `sleepskip` CLI. The command is spelled `sleepskip` rather than `skip` because `skip` is already taken by skip.tools on Homebrew.
+
 
 ### Download Release (Universal: Apple Silicon + Intel)
 
-1. Download `SleepGuard-1.1.0-macOS-universal.dmg` from [GitHub Releases](https://github.com/LaiYongqiang/SleepGuard/releases) and drag `SleepGuard.app` to `/Applications`.
+1. Download `SleepSkip-1.2.0-macOS-universal.dmg` from [GitHub Releases](https://github.com/LaiYongqiang/SleepSkip/releases) and drag `SleepSkip.app` to `/Applications`.
 2. Since release builds are ad-hoc signed without a paid Apple Developer ID, run once if Gatekeeper blocks first launch:
    ```bash
-   xattr -cr /Applications/SleepGuard.app
+   xattr -cr /Applications/SleepSkip.app
    ```
 
 ### Build from Source (macOS 13+)
@@ -87,13 +91,13 @@ brew install --cask --no-quarantine laiyongqiang/tap/sleepguard
 Requires Xcode Command Line Tools (`swift` 5.10+):
 
 ```bash
-git clone https://github.com/LaiYongqiang/SleepGuard.git
-cd SleepGuard
+git clone https://github.com/LaiYongqiang/SleepSkip.git
+cd SleepSkip
 
 # Run unit and caffeinate lifecycle tests
 ./scripts/verify.sh
 
-# Build Universal SleepGuard.app bundle, ZIP, and DMG in ./dist/
+# Build Universal SleepSkip.app bundle, ZIP, and DMG in ./dist/
 chmod +x scripts/build_app.sh
 ./scripts/build_app.sh
 ```
@@ -102,7 +106,7 @@ chmod +x scripts/build_app.sh
 
 ## Architectural Guardrails
 
-SleepGuard strictly avoids:
+SleepSkip strictly avoids:
 1. Background polling (`ps`, `pgrep`, `pmset`) or 1Hz menu bar icon redraws when closed.
 2. Silent or unrecoverable system sleep modifications.
 3. Synthetic mouse/keyboard jiggling to bypass OS lock screen security.

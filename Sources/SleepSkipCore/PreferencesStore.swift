@@ -2,20 +2,21 @@ import Foundation
 
 public final class PreferencesStore {
     private enum Keys {
-        static let mode = "sleepguard.mode"
-        static let durationMinutes = "sleepguard.durationMinutes"
-        static let customMinutes = "sleepguard.customMinutes"
-        static let lockOnStart = "sleepguard.lockOnStart"
-        static let allowClosedLid = "sleepguard.allowClosedLid"
-        static let batteryThreshold = "sleepguard.batteryThresholdPercent"
-        static let stopOnUnplug = "sleepguard.stopOnUnplug"
-        static let language = "sleepguard.language"
-        static let hasShownOnboarding = "sleepguard.hasShownOnboarding"
+        static let mode = "sleepskip.mode"
+        static let durationMinutes = "sleepskip.durationMinutes"
+        static let customMinutes = "sleepskip.customMinutes"
+        static let lockOnStart = "sleepskip.lockOnStart"
+        static let allowClosedLid = "sleepskip.allowClosedLid"
+        static let batteryThreshold = "sleepskip.batteryThresholdPercent"
+        static let stopOnUnplug = "sleepskip.stopOnUnplug"
+        static let autoFollowAgents = "sleepskip.autoFollowAgents"
+        static let language = "sleepskip.language"
+        static let hasShownOnboarding = "sleepskip.hasShownOnboarding"
     }
 
     private let defaults: UserDefaults
 
-    public init(defaults: UserDefaults = UserDefaults(suiteName: "io.github.laiyongqiang.SleepGuard") ?? .standard) {
+    public init(defaults: UserDefaults = UserDefaults(suiteName: "io.github.laiyongqiang.SleepSkip") ?? .standard) {
         self.defaults = defaults
     }
 
@@ -29,15 +30,16 @@ public final class PreferencesStore {
         let mode = GuardMode(rawValue: modeRaw) ?? .background
 
         let durationMinutes: Double
-        if defaults.object(forKey: Keys.durationMinutes) != nil {
-            durationMinutes = defaults.double(forKey: Keys.durationMinutes)
+        if let stored = defaults.object(forKey: Keys.durationMinutes) as? Double {
+            // 0 means "indefinite"; anything non-finite or negative falls back to the default.
+            durationMinutes = stored == 0 ? 0 : (CommandBuilder.sanitizeMinutes(stored) ?? 240)
         } else {
             durationMinutes = 240
         }
 
         let customMinutes: Double
-        if defaults.object(forKey: Keys.customMinutes) != nil {
-            customMinutes = max(1, defaults.double(forKey: Keys.customMinutes))
+        if let stored = defaults.object(forKey: Keys.customMinutes) as? Double {
+            customMinutes = CommandBuilder.sanitizeMinutes(stored) ?? 90
         } else {
             customMinutes = 90
         }
@@ -70,6 +72,13 @@ public final class PreferencesStore {
             stopOnUnplug = false
         }
 
+        let autoFollowAgents: Bool
+        if defaults.object(forKey: Keys.autoFollowAgents) != nil {
+            autoFollowAgents = defaults.bool(forKey: Keys.autoFollowAgents)
+        } else {
+            autoFollowAgents = false
+        }
+
         let langRaw = defaults.string(forKey: Keys.language) ?? AppLanguage.system.rawValue
         let language = AppLanguage(rawValue: langRaw) ?? .system
 
@@ -81,6 +90,7 @@ public final class PreferencesStore {
             allowClosedLid: allowClosedLid,
             batteryThresholdPercent: batteryThreshold,
             stopOnUnplug: stopOnUnplug,
+            autoFollowAgents: autoFollowAgents,
             language: language
         )
     }
@@ -93,6 +103,7 @@ public final class PreferencesStore {
         defaults.set(config.allowClosedLid, forKey: Keys.allowClosedLid)
         defaults.set(config.batteryThresholdPercent, forKey: Keys.batteryThreshold)
         defaults.set(config.stopOnUnplug, forKey: Keys.stopOnUnplug)
+        defaults.set(config.autoFollowAgents, forKey: Keys.autoFollowAgents)
         defaults.set(config.language.rawValue, forKey: Keys.language)
     }
 }

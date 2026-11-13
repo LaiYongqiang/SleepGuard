@@ -61,7 +61,7 @@ struct ScreenshotRenderer {
         let outDir = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "docs/images"
         try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
 
-        let tempSuite = "io.github.laiyongqiang.SleepGuard.render.\(UUID().uuidString)"
+        let tempSuite = "io.github.laiyongqiang.SleepSkip.render.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: tempSuite)!
         defer { defaults.removePersistentDomain(forName: tempSuite) }
         let store = PreferencesStore(defaults: defaults)
@@ -81,7 +81,7 @@ struct ScreenshotRenderer {
         manager.isRunning = false
 
         render(
-            view: SleepGuardPopoverView(manager: manager),
+            view: SleepSkipPopoverView(manager: manager),
             appearance: .aqua,
             outPath: "\(outDir)/preview-idle-light.png"
         )
@@ -95,13 +95,13 @@ struct ScreenshotRenderer {
         manager.endDate = Date().addingTimeInterval(14356)
 
         render(
-            view: SleepGuardPopoverView(manager: manager),
+            view: SleepSkipPopoverView(manager: manager),
             appearance: .aqua,
             outPath: "\(outDir)/preview-running-light.png"
         )
 
         render(
-            view: SleepGuardPopoverView(manager: manager),
+            view: SleepSkipPopoverView(manager: manager),
             appearance: .darkAqua,
             outPath: "\(outDir)/preview-running-dark.png"
         )
@@ -109,7 +109,7 @@ struct ScreenshotRenderer {
         manager.showSettings = true
         manager.isRunning = false
         render(
-            view: SleepGuardPopoverView(manager: manager),
+            view: SleepSkipPopoverView(manager: manager),
             appearance: .aqua,
             outPath: "\(outDir)/preview-settings-light.png"
         )
@@ -117,20 +117,20 @@ struct ScreenshotRenderer {
         manager.showSettings = false
         manager.config.language = .en
         render(
-            view: SleepGuardPopoverView(manager: manager),
+            view: SleepSkipPopoverView(manager: manager),
             appearance: .aqua,
             outPath: "\(outDir)/preview-idle-en.png"
         )
 
         manager.isRunning = true
         render(
-            view: SleepGuardPopoverView(manager: manager),
+            view: SleepSkipPopoverView(manager: manager),
             appearance: .aqua,
             outPath: "\(outDir)/preview-running-light-en.png"
         )
 
         render(
-            view: SleepGuardPopoverView(manager: manager),
+            view: SleepSkipPopoverView(manager: manager),
             appearance: .darkAqua,
             outPath: "\(outDir)/preview-running-dark-en.png"
         )
@@ -138,7 +138,7 @@ struct ScreenshotRenderer {
         manager.isRunning = false
         manager.showSettings = true
         render(
-            view: SleepGuardPopoverView(manager: manager),
+            view: SleepSkipPopoverView(manager: manager),
             appearance: .aqua,
             outPath: "\(outDir)/preview-settings-en.png"
         )

@@ -54,6 +54,7 @@ public struct SessionConfig: Equatable, Sendable {
     public var allowClosedLid: Bool
     public var batteryThresholdPercent: Int
     public var stopOnUnplug: Bool
+    public var autoFollowAgents: Bool
     public var language: AppLanguage
 
     public init(
@@ -64,6 +65,7 @@ public struct SessionConfig: Equatable, Sendable {
         allowClosedLid: Bool = false,
         batteryThresholdPercent: Int = 10,
         stopOnUnplug: Bool = false,
+        autoFollowAgents: Bool = false,
         language: AppLanguage = .system
     ) {
         self.mode = mode
@@ -73,6 +75,7 @@ public struct SessionConfig: Equatable, Sendable {
         self.allowClosedLid = allowClosedLid
         self.batteryThresholdPercent = batteryThresholdPercent
         self.stopOnUnplug = stopOnUnplug
+        self.autoFollowAgents = autoFollowAgents
         self.language = language
     }
 
@@ -124,7 +127,7 @@ public enum URLCommand: Equatable, Sendable {
 
 public enum URLCommandParser {
     public static func parse(_ url: URL) -> URLCommand? {
-        guard url.scheme?.lowercased() == "sleepguard" else { return nil }
+        guard url.scheme?.lowercased() == "sleepskip" else { return nil }
         let host = (url.host ?? "").lowercased()
         let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
         let action = !host.isEmpty ? host : path
@@ -155,7 +158,7 @@ public enum URLCommandParser {
                 .first(where: { $0.name.lowercased() == "minutes" || $0.name.lowercased() == "duration" })
                 .flatMap { $0.value }
                 .flatMap { Double($0) }
-                .map { max(0, $0) }
+                .flatMap { CommandBuilder.sanitizeMinutes($0) }
             let lock = boolValue("lock")
             let lid = boolValue("lid")
             return .start(mode: mode, minutes: minutes, lockOnStart: lock, allowClosedLid: lid)
@@ -184,29 +187,43 @@ public enum CLICommand: Equatable, Sendable {
 public enum CLIParser {
     public static func parse(arguments: [String]) -> CLICommand {
         let args = Array(arguments.dropFirst())
-        if args.contains("--version") || args.contains("-v") {
+
+        // Only options before `--` belong to SleepSkip. Everything after it is the wrapped
+        // command's own argv and must be passed through untouched, even if it contains
+        // `--version` or `--help`.
+        let optionArgs: ArraySlice<String>
+        let passthroughArgs: [String]
+        if let dashIndex = args.firstIndex(of: "--") {
+            optionArgs = args[..<dashIndex]
+            passthroughArgs = Array(args[(dashIndex + 1)...])
+        } else {
+            optionArgs = args[...]
+            passthroughArgs = []
+        }
+
+        if optionArgs.contains("--version") || optionArgs.contains("-v") {
             return .version
         }
-        if args.contains("--help") || args.contains("-h") {
+        if optionArgs.contains("--help") || optionArgs.contains("-h") {
             return .help
         }
 
         var mode: GuardMode = .background
         var lockOnFinish = false
 
-        if let dashIndex = args.firstIndex(of: "--") {
-            let options = args[..<dashIndex]
-            for opt in options {
+        if !passthroughArgs.isEmpty {
+            for opt in optionArgs {
                 if opt == "--display" || opt == "-d" {
                     mode = .keepDisplay
                 } else if opt == "--lock" || opt == "-l" {
                     lockOnFinish = true
                 }
             }
-            let cmdArgs = Array(args[(dashIndex + 1)...])
-            if !cmdArgs.isEmpty {
-                return .runCommand(arguments: cmdArgs, mode: mode, lockOnFinish: lockOnFinish)
-            }
+            return .runCommand(arguments: passthroughArgs, mode: mode, lockOnFinish: lockOnFinish)
+        }
+
+        if args.firstIndex(of: "--") != nil {
+            // `--` was given with nothing after it: nothing to run.
             return .help
         }
 
@@ -231,7 +248,19 @@ public enum CLIParser {
     }
 }
 
+public enum AppInfo {
+    /// Single source of truth for the version shown in the CLI banner and the settings panel.
+    /// The build script rewrites this value from the git tag, so it never drifts from the release.
+    public static let version = "1.2.0"
+
+    public static let repositoryURL = "https://github.com/LaiYongqiang/SleepSkip"
+}
+
 public enum CommandBuilder {
+    /// Upper bound for a single session. Guards against `Double("inf")`, `1e300`, and typos
+    /// that would otherwise crash `Int(_:)` when building the caffeinate timeout.
+    public static let maxDurationMinutes: Double = 7 * 24 * 60
+
     public static func caffeinateArguments(
         mode: GuardMode,
         parentPID: Int32,
@@ -245,9 +274,15 @@ public enum CommandBuilder {
         return args
     }
 
+    /// Normalizes user-supplied minutes: nil when invalid or non-positive (indefinite).
+    public static func sanitizeMinutes(_ minutes: Double) -> Double? {
+        guard minutes.isFinite, minutes > 0 else { return nil }
+        return min(minutes, maxDurationMinutes)
+    }
+
     public static func timeoutSeconds(forMinutes minutes: Double) -> Int? {
-        guard minutes > 0 else { return nil }
-        return max(1, Int((minutes * 60.0).rounded()))
+        guard let safe = sanitizeMinutes(minutes) else { return nil }
+        return max(1, Int((safe * 60.0).rounded()))
     }
 
     public static func closedLidWatchScript(watchPID: Int32) -> String {
@@ -267,7 +302,8 @@ public enum DurationFormatter {
     }
 
     public static func formatDuration(_ minutes: Double, isChinese: Bool) -> String {
-        if minutes <= 0 {
+        // Non-finite or out-of-range values fall back to "Indefinite" rather than trapping in Int(_:).
+        guard let minutes = CommandBuilder.sanitizeMinutes(minutes) else {
             return isChinese ? "永久" : "Indefinite"
         }
         if minutes < 60 {
@@ -283,7 +319,7 @@ public enum DurationFormatter {
     }
 
     public static func formatShortPreset(_ minutes: Double, isChinese: Bool) -> String {
-        if minutes <= 0 {
+        guard let minutes = CommandBuilder.sanitizeMinutes(minutes) else {
             return isChinese ? "永久" : "∞"
         }
         if minutes < 60 {

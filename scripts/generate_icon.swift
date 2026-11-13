@@ -9,7 +9,7 @@ guard CommandLine.arguments.count > 1 else {
 
 let outputIcnsPath = CommandLine.arguments[1]
 let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
-    .appendingPathComponent("SleepGuardIcon-\(UUID().uuidString)")
+    .appendingPathComponent("SleepSkipIcon-\(UUID().uuidString)")
 let iconsetDir = tempDir.appendingPathComponent("AppIcon.iconset")
 
 try FileManager.default.createDirectory(at: iconsetDir, withIntermediateDirectories: true)
@@ -83,8 +83,8 @@ func renderIcon(size: Int) -> NSBitmapImageRep {
     cg.strokePath()
     cg.restoreGState()
 
-    // Center SF Symbol: cup.and.saucer.fill
-    if let sym = NSImage(systemSymbolName: "cup.and.saucer.fill", accessibilityDescription: nil) {
+    // Center SF Symbol: moon.zzz.fill
+    if let sym = NSImage(systemSymbolName: "moon.zzz.fill", accessibilityDescription: nil) {
         let cfg = NSImage.SymbolConfiguration(pointSize: s * 0.38, weight: .semibold)
             .applying(NSImage.SymbolConfiguration(paletteColors: [
                 NSColor(red: 0.94, green: 0.97, blue: 1.0, alpha: 1.0)
@@ -102,8 +102,9 @@ func renderIcon(size: Int) -> NSBitmapImageRep {
     }
 
     // Active green status dot badge at top-right of cup
-    let dotRadius = s * 0.065
-    let dotCenter = CGPoint(x: s * 0.71, y: s * 0.72)
+    // Top-right corner, clear of the moon and the zzz glyphs.
+    let dotRadius = s * 0.058
+    let dotCenter = CGPoint(x: s * 0.755, y: s * 0.775)
     let dotRect = CGRect(
         x: dotCenter.x - dotRadius,
         y: dotCenter.y - dotRadius,
@@ -112,6 +113,10 @@ func renderIcon(size: Int) -> NSBitmapImageRep {
     )
     cg.setFillColor(NSColor(red: 0.18, green: 0.82, blue: 0.46, alpha: 1.0).cgColor)
     cg.fillEllipse(in: dotRect)
+    // Thin dark ring separates the dot from the moon when they overlap at small sizes.
+    cg.setStrokeColor(NSColor(red: 0.09, green: 0.12, blue: 0.19, alpha: 1.0).cgColor)
+    cg.setLineWidth(max(1.0, s * 0.008))
+    cg.strokeEllipse(in: dotRect.insetBy(dx: -s * 0.004, dy: -s * 0.004))
 
     NSGraphicsContext.restoreGraphicsState()
     return rep

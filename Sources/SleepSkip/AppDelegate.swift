@@ -1,13 +1,13 @@
 import Cocoa
 import Darwin
 import Foundation
-import SleepGuardCore
+import SleepSkipCore
 import SwiftUI
 
 enum IPCNotifications {
-    static let openPopover = Notification.Name("io.github.laiyongqiang.SleepGuard.OpenPopover")
-    static let cliStarted = Notification.Name("io.github.laiyongqiang.SleepGuard.CLIStarted")
-    static let cliStopped = Notification.Name("io.github.laiyongqiang.SleepGuard.CLIStopped")
+    static let openPopover = Notification.Name("io.github.laiyongqiang.SleepSkip.OpenPopover")
+    static let cliStarted = Notification.Name("io.github.laiyongqiang.SleepSkip.CLIStarted")
+    static let cliStopped = Notification.Name("io.github.laiyongqiang.SleepSkip.CLIStopped")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var sigIntSource: DispatchSourceSignal?
     private var cliProcessSource: DispatchSourceProcess?
     private var wakeObserver: NSObjectProtocol?
+    private var agentMonitor: AgentActivityMonitor?
 
     private let store = PreferencesStore()
     let sessionManager: SessionManager
@@ -55,6 +56,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         sessionManager.onRequestClosePopover = { [weak self] in
             self?.closePopover()
+        }
+        sessionManager.onAutoFollowToggled = { [weak self] enabled in
+            self?.applyAutoFollow(enabled)
+        }
+        if sessionManager.isAutoFollowEnabled {
+            applyAutoFollow(true)
         }
 
         updateStatusItemAppearance(
@@ -119,6 +126,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             name: IPCNotifications.cliStopped,
             object: nil
         )
+    }
+
+    private func applyAutoFollow(_ enabled: Bool) {
+        agentMonitor?.stop()
+        agentMonitor = nil
+        guard enabled else { return }
+
+        let monitor = AgentActivityMonitor(
+            tracker: sessionManager.agentTracker,
+            onStateChange: { [weak self] state in
+                DispatchQueue.main.async {
+                    self?.sessionManager.handleAgentActivity(state)
+                }
+            },
+            onSessionLimitReached: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.sessionManager.handleAutoFollowLimitReached()
+                }
+            }
+        )
+        monitor.start()
+        agentMonitor = monitor
+    }
+
+    /// Sources whose directories exist, for display in preferences.
+    private var availableAgentSources: [AgentSource] {
+        AgentSource.defaults().filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     private func setupWorkspaceNotifications() {
@@ -212,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.animates = true
         popover.delegate = self
 
-        let rootView = SleepGuardPopoverView(manager: sessionManager)
+        let rootView = SleepSkipPopoverView(manager: sessionManager)
         let hostingController = NSHostingController(rootView: rootView)
         hostingController.sizingOptions = [.preferredContentSize]
         popover.contentViewController = hostingController
@@ -404,9 +438,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let button = statusItem?.button else { return }
         let symbolName: String
         if active {
-            symbolName = closedLid ? "lock.laptopcomputer" : "cup.and.saucer.fill"
+            symbolName = closedLid ? "lock.laptopcomputer" : "moon.zzz.fill"
         } else {
-            symbolName = "cup.and.saucer"
+            symbolName = "moon"
         }
         let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: sessionManager.l10n.appName)
         img?.isTemplate = true
