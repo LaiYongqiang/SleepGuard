@@ -135,12 +135,13 @@ struct VerifyRunner {
         let store = PreferencesStore(defaults: defaults)
         var cfg = store.load()
         expect(cfg.mode == .background && cfg.durationMinutes == 240 && cfg.lockOnStart && !cfg.stopOnUnplug, "Defaults match spec")
-        expect(!cfg.autoFollowAgents, "Auto-follow is off by default")
+        expect(cfg.autoFollowAgents, "Auto-follow is on by default")
         cfg.stopOnUnplug = true
-        cfg.autoFollowAgents = true
+        cfg.autoFollowAgents = false
         cfg.language = .en
         store.save(cfg)
         expect(store.load() == cfg, "Preferences persistence round-trip")
+        expect(store.load().autoFollowAgents == false, "An explicit opt-out survives reload")
 
         // 4. SessionManager state machine
         var now = Date(timeIntervalSince1970: 1_700_000_000)

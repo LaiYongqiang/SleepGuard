@@ -65,7 +65,7 @@ public struct SessionConfig: Equatable, Sendable {
         allowClosedLid: Bool = false,
         batteryThresholdPercent: Int = 10,
         stopOnUnplug: Bool = false,
-        autoFollowAgents: Bool = false,
+        autoFollowAgents: Bool = true,
         language: AppLanguage = .system
     ) {
         self.mode = mode

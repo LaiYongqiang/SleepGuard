@@ -106,6 +106,9 @@ struct ScreenshotRenderer {
             outPath: "\(outDir)/preview-running-dark.png"
         )
 
+        // Show the state a real user sees: sources discovered, auto-follow on.
+        manager.setAgentSources(AgentSource.defaults())
+        manager.config.autoFollowAgents = true
         manager.showSettings = true
         manager.isRunning = false
         render(
@@ -136,6 +139,9 @@ struct ScreenshotRenderer {
         )
 
         manager.isRunning = false
+        // Show the state a real user sees: sources discovered, auto-follow on.
+        manager.setAgentSources(AgentSource.defaults())
+        manager.config.autoFollowAgents = true
         manager.showSettings = true
         render(
             view: SleepSkipPopoverView(manager: manager),

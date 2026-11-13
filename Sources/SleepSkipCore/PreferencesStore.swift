@@ -12,6 +12,7 @@ public final class PreferencesStore {
         static let autoFollowAgents = "sleepskip.autoFollowAgents"
         static let language = "sleepskip.language"
         static let hasShownOnboarding = "sleepskip.hasShownOnboarding"
+        static let hasSeenAutoFollowNotice = "sleepskip.hasSeenAutoFollowNotice"
         static let didMigrateFromSleepGuard = "sleepskip.didMigrateFromSleepGuard"
 
         /// Key names used by SleepGuard before the 1.2.0 rename.
@@ -65,6 +66,11 @@ public final class PreferencesStore {
         set { defaults.set(newValue, forKey: Keys.hasShownOnboarding) }
     }
 
+    public var hasSeenAutoFollowNotice: Bool {
+        get { defaults.bool(forKey: Keys.hasSeenAutoFollowNotice) }
+        set { defaults.set(newValue, forKey: Keys.hasSeenAutoFollowNotice) }
+    }
+
     public func load() -> SessionConfig {
         let modeRaw = defaults.string(forKey: Keys.mode) ?? GuardMode.background.rawValue
         let mode = GuardMode(rawValue: modeRaw) ?? .background
@@ -112,11 +118,13 @@ public final class PreferencesStore {
             stopOnUnplug = false
         }
 
+        // On by default: the product promise is that the app works without being configured.
+        // Anyone who has ever flipped the switch has a stored value and keeps their choice.
         let autoFollowAgents: Bool
         if defaults.object(forKey: Keys.autoFollowAgents) != nil {
             autoFollowAgents = defaults.bool(forKey: Keys.autoFollowAgents)
         } else {
-            autoFollowAgents = false
+            autoFollowAgents = true
         }
 
         let langRaw = defaults.string(forKey: Keys.language) ?? AppLanguage.system.rawValue

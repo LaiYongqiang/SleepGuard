@@ -65,6 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         sessionManager.onAutoFollowToggled = { [weak self] enabled in
             self?.applyAutoFollow(enabled)
         }
+        sessionManager.onAutoFollowNoticeDismissed = { [weak self] in
+            self?.store.hasSeenAutoFollowNotice = true
+        }
+        sessionManager.setAgentSources(availableAgentSources)
+        sessionManager.presentAutoFollowNoticeIfNeeded(hasDismissed: store.hasSeenAutoFollowNotice)
         if sessionManager.isAutoFollowEnabled {
             applyAutoFollow(true)
         }
@@ -422,6 +427,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         stopDisplayTimer()
+        // The first-run notice has been shown; do not bring it back on the next open.
+        sessionManager.retireAutoFollowNoticeOnPanelClose()
     }
 
     private func startDisplayTimer() {
