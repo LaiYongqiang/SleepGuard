@@ -343,32 +343,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         sessionManager.reconcileOnWakeOrShow()
         sessionManager.refreshStaleSleepState()
         NSApp.activate(ignoringOtherApps: true)
+
+        // Menu bar managers (Ice, Bartender, Icey, Hidden Bar, …) can move an item into a hidden
+        // section that parks its window far off-screen. Anchoring there makes AppKit clamp the
+        // popover to the nearest display edge, which looks broken. Detect the cause — the anchor
+        // being off-screen — rather than the symptom, so an item legitimately placed at the left
+        // end of the bar still gets a normally anchored popover.
+        let anchorIsOffScreen = statusItemIsOffScreen(button)
+
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+
+        guard anchorIsOffScreen else {
+            startDisplayTimer()
+            return
+        }
         // NSPopover finishes positioning asynchronously after `show`, so correct it on the next
         // runloop turn rather than immediately.
         DispatchQueue.main.async { [weak self] in
-            self?.keepPopoverOnScreen()
+            self?.parkPopoverAtScreenCorner()
         }
         startDisplayTimer()
+    }
+
+    /// True when the status item's own window is not on any visible display.
+    private func statusItemIsOffScreen(_ button: NSStatusBarButton) -> Bool {
+        guard let window = button.window else { return true }
+        let frame = window.frame
+        // A hidden item can be parked thousands of points away, but some managers only shift it
+        // by a few hundred, so check intersection rather than a fixed threshold.
+        return !NSScreen.screens.contains { $0.frame.intersects(frame) }
     }
 
     /// Menu bar managers (Ice, Bartender, …) can move our status item into a hidden section that
     /// parks its window far off-screen. NSPopover then anchors to that invisible point and the
     /// panel ends up clipped against the display corner. Nudge the popover window back inside the
     /// visible frame, just under the menu bar on the right.
-    private func keepPopoverOnScreen() {
+    /// Places the panel just inside the top-right of the visible area. Used only when the status
+    /// item itself is off-screen, so the panel still has a sensible place to appear.
+    private func parkPopoverAtScreenCorner() {
         guard let popoverWindow = popover.contentViewController?.view.window,
               let screen = NSScreen.main ?? NSScreen.screens.first else { return }
 
         let visible = screen.visibleFrame
         var frame = popoverWindow.frame
-        // Also treat "clipped against the left edge" as misplaced: that is what an off-screen
-        // anchor looks like once AppKit clamps it to the nearest display.
-        let misplaced = frame.minX < visible.minX + 4
-
-        guard misplaced else { return }
-
         frame.origin.x = visible.maxX - frame.width - 12
         frame.origin.y = visible.maxY - frame.height - 12
         popoverWindow.setFrame(frame, display: true, animate: false)
