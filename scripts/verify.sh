@@ -305,6 +305,9 @@ struct VerifyRunner {
         sm.setAutoFollowEnabled(true)
         sm.handleAgentActivity(.active(agents: ["claude-code"], lastActivity: clock))
         expect(sm.isFollowingAgents && sm.isRunning, "Auto-follow engages on activity")
+        // Regression: the panel read 00:00:00 because `remainingSeconds` was never computed.
+        expect(sm.remainingSeconds > 0, "Auto-follow populates the countdown immediately")
+        expect(sm.endDate != nil, "Auto-follow sets an end date")
         sm.stopSession(reason: .manual)
         expect(!sm.isFollowingAgents && !sm.isRunning, "Manual stop ends the automatic session")
         sm.handleAgentActivity(.active(agents: ["claude-code"], lastActivity: clock))

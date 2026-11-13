@@ -192,6 +192,9 @@ public final class SessionManager: ObservableObject {
         isFollowingAgents = true
         autoFollowLimitReached = false
         isRunning = true
+        // Without this the panel shows 00:00:00: `endDate` was just set, but `remainingSeconds`
+        // is only recomputed here or by the once-a-second tick.
+        refreshDisplayTick()
         startPowerWatch()
         onStateChange?(isEffectivelyActive, false)
     }
