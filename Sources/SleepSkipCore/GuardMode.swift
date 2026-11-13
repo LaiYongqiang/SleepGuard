@@ -251,7 +251,7 @@ public enum CLIParser {
 public enum AppInfo {
     /// Single source of truth for the version shown in the CLI banner and the settings panel.
     /// The build script rewrites this value from the git tag, so it never drifts from the release.
-    public static let version = "1.3.3"
+    public static let version = "1.4.0"
 
     public static let repositoryURL = "https://github.com/LaiYongqiang/SleepSkip"
 }
@@ -285,9 +285,21 @@ public enum CommandBuilder {
         return max(1, Int((safe * 60.0).rounded()))
     }
 
+    /// Shell command that disables lid-close sleep and restores it when the sentinel exits.
+    ///
+    /// Written to a file and run detached, not through `do shell script`:
+    ///
+    /// - `do shell script` waits for its output pipe to close, and a `&`-backgrounded child keeps
+    ///   that pipe open, so the AppleScript call can hang until the sentinel dies.
+    /// - Running detached means no process outlives the app, and the script's own PID can be
+    ///   recorded so a leftover run can be cleaned up on the next launch.
     public static func closedLidWatchScript(watchPID: Int32) -> String {
         return """
-        /usr/bin/pmset -a disablesleep 1 && (trap '/usr/bin/pmset -a disablesleep 0' EXIT INT TERM; /usr/bin/caffeinate -i -w \(watchPID) >/dev/null 2>&1; /usr/bin/pmset -a disablesleep 0) </dev/null >/dev/null 2>&1 &
+        #!/bin/sh
+        /usr/bin/pmset -a disablesleep 1 || exit 1
+        trap '/usr/bin/pmset -a disablesleep 0' EXIT INT TERM
+        /usr/bin/caffeinate -i -w \(watchPID) >/dev/null 2>&1
+        /usr/bin/pmset -a disablesleep 0
         """
     }
 }

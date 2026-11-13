@@ -50,6 +50,17 @@ final class BackpackGuard: BackpackGuarding {
     private var sentinelProcess: Process?
     private var sentinelPipe: Pipe?
 
+    /// Path of the detached guard script, so a leftover run can be terminated on next launch.
+    static var scriptPath: String {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("SleepSkip", isDirectory: true)
+        let base = dir ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base.appendingPathComponent("lid-guard.sh").path
+    }
+
+    static var pidPath: String { scriptPath + ".pid" }
+
     var isActive: Bool {
         sentinelProcess?.isRunning ?? false
     }
@@ -74,12 +85,24 @@ final class BackpackGuard: BackpackGuarding {
         sentinelPipe = pipe
         sentinelProcess = cat
         let watchPID = cat.processIdentifier
-        let shellCommand = CommandBuilder.closedLidWatchScript(watchPID: watchPID)
+
+        // Write the script to disk and launch it detached. Running it through
+        // `do shell script` would block on the output pipe held by the backgrounded child,
+        // leaving the UI spinning while the authorization had in fact succeeded.
+        let scriptURL = URL(fileURLWithPath: Self.scriptPath)
+        do {
+            try CommandBuilder.closedLidWatchScript(watchPID: watchPID).write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
+        } catch {
+            disable()
+            completion(.failure(error))
+            return
+        }
 
         DispatchQueue.global(qos: .userInitiated).async {
             var errorDict: NSDictionary?
-            let script = NSAppleScript(source: "do shell script \"\(shellCommand)\" with administrator privileges")
-            let result = script?.executeAndReturnError(&errorDict)
+            let source = "do shell script \"nohup /bin/sh \(scriptURL.path) >/dev/null 2>&1 & echo $! > \(Self.pidPath)\" with administrator privileges"
+            let result = NSAppleScript(source: source)?.executeAndReturnError(&errorDict)
 
             DispatchQueue.main.async {
                 if result != nil {
@@ -101,6 +124,24 @@ final class BackpackGuard: BackpackGuarding {
         sentinelPipe = nil
         sentinelProcess?.terminate()
         sentinelProcess = nil
+        Self.terminateDetachedGuard()
+    }
+
+    /// Stops a guard script left running by a previous session. Without this, a crash or force-quit
+    /// leaves `disablesleep 1` in place with nothing watching the sentinel.
+    static func terminateDetachedGuard() {
+        guard let raw = try? String(contentsOfFile: pidPath, encoding: .utf8),
+              let pid = Int32(raw.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 else {
+            try? FileManager.default.removeItem(atPath: pidPath)
+            return
+        }
+        // The pid file survives restarts, so verify it still belongs to our script before signalling.
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        if length > 0, String(cString: buffer).hasSuffix("lid-guard.sh") {
+            kill(pid, SIGTERM)
+        }
+        try? FileManager.default.removeItem(atPath: pidPath)
     }
 
     func checkSleepDisabledAsync(completion: @escaping (Bool) -> Void) {

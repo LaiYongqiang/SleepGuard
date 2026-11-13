@@ -99,6 +99,10 @@ public struct L10n {
             : "Currently on battery while Stop on Unplug is enabled"
     }
 
+    public var authorizationTimedOut: String {
+        isZh ? "授权超时，请重试（若系统已禁用合盖休眠，可点「立即恢复」）" : "Authorization timed out. Try again — or use Restore if lid-close sleep is still disabled."
+    }
+
     public func invalidDurationError(_ maxMinutes: Double) -> String {
         let maxDays = Int(maxMinutes / 60 / 24)
         return isZh

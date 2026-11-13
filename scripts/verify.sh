@@ -89,6 +89,15 @@ struct VerifyRunner {
         expect(CommandBuilder.timeoutSeconds(forMinutes: 0) == nil, "Indefinite timeout returns nil")
         expect(CommandBuilder.timeoutSeconds(forMinutes: 240) == 14400, "240m -> 14400s")
 
+        // The lid guard runs as a standalone script, not through `do shell script`, whose
+        // output pipe a backgrounded child would keep open and block on.
+        let lidScript = CommandBuilder.closedLidWatchScript(watchPID: 4242)
+        expect(lidScript.hasPrefix("#!/bin/sh"), "Lid guard is a runnable script")
+        expect(lidScript.contains("/usr/bin/pmset -a disablesleep 1 || exit 1"), "Guard enables lid-close sleep")
+        expect(lidScript.contains("trap '/usr/bin/pmset -a disablesleep 0' EXIT INT TERM"), "Guard restores sleep on exit")
+        expect(lidScript.contains("/usr/bin/caffeinate -i -w 4242"), "Guard watches the sentinel pid")
+        expect(!lidScript.contains("&\n"), "Guard does not background a child that would hold the pipe")
+
         // 2. URLCommandParser & CLIParser checks
         let url = URL(string: "sleepskip://start?mode=display&minutes=90&lock=0")!
         expect(URLCommandParser.parse(url) == .start(mode: .keepDisplay, minutes: 90, lockOnStart: false, allowClosedLid: nil), "URL start parsing")
