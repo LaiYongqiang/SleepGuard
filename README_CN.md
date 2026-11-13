@@ -1,12 +1,20 @@
 # SleepSkip（惜眠）
 
-**零定时器，零轮询，零空耗。** —— 专为 Vibe Coding 与 AI Agent 时代打造的极致轻量 macOS 原生菜单栏 + CLI 防休眠工具。
+**Agent 没干完，Mac 不许睡。**
 
-[English](README.md) · [产品需求文档 (PRD)](docs/PRD.md)
+一个会**跟着 Agent 走**的 macOS 菜单栏 + CLI 防休眠工具：Claude Code、Codex、DeepSeek Harness 在写文件时按住睡眠，停笔 5 分钟后自动放手。
 
-> Agent 没干完，Mac 不许睡。把有限的电池电量留给真正干活的 **Codex CLI、Claude Code、构建任务与后台服务**，而不是浪费在无人观看的屏幕上。
+[English](README.md) · [产品需求文档 (PRD)](docs/PRD.md) · [实测资源占用](docs/PERFORMANCE.md)
 
-名字里有两层意思：**skip** 掉不必要的睡眠，**spare** 下不该浪费的电量。中文名「惜眠」——把睡眠省着用。
+> **为什么不直接用 Amphetamine？** 它按**时长**保持唤醒，SleepSkip 按**任务**保持唤醒。它用 FSEvents 监听 Agent 的会话目录（只看文件变化，从不读取内容），Agent 提前收工就立刻省电，跑得久也不会被定时器掐断。
+
+| | Amphetamine / Caffeine | SleepSkip |
+| :--- | :--- | :--- |
+| 保持唤醒 | ✅ | ✅ |
+| 知道 Agent 什么时候收工 | ❌ | ✅ FSEvents，无轮询 |
+| 空闲 CPU | 菜单栏应用 | **120 秒 0.09–0.24 毫秒**（[实测](docs/PERFORMANCE.md)）|
+| 包裹命令（`sleepskip -- claude …`）| ❌ | ✅ 随命令退出 |
+| 合盖模式 | ⚠️ 不可靠 | ✅ 显式开关 + 看门狗 |
 
 ---
 
@@ -20,6 +28,7 @@
 
 ## 核心特色
 
+- **自动跟随 AI Agent**（默认开启）：FSEvents 监听 Agent 的会话目录（`~/.claude/projects`、`~/.codex/sessions`、`~/.dsh/sessions`），Agent 写文件期间按住睡眠，停笔 5 分钟后释放。实测开销约 **每 20 秒 0.2 毫秒 CPU**，唤醒次数不多于菜单栏图标本身。进程轮询方案实测为每 30 秒 160 毫秒外加每秒一次唤醒，已否决。只观察文件变化，从不读取会话内容。手动会话始终优先，另有 2 小时硬上限防止意外整夜挂机。首次运行会说明监听了哪些目录，开关在偏好设置里。
 - **收起面板后零定时器、零轮询**：直接基于 macOS 原生 `/usr/bin/caffeinate`，倒计时定时器仅在 Popover 展开可见时运行。[实测](docs/PERFORMANCE.md)：空闲 120 秒仅消耗 0.09–0.24 毫秒 CPU——和一个只画菜单栏图标、什么都不做的 App 处于同一量级。
 - **零孤儿进程守护**：所有 `caffeinate` 子进程均通过 `-w <APP_PID>` 绑定生命周期，无论正常退出还是意外强杀，系统内核自动回收断言。
 - **记忆配置 + 一次回车直启**：自动记住上一次模式、锁屏/合盖选项与时长。打开面板按 `Enter` 即可按上次配置启动；支持不锁屏启动时留在本面板显示大号倒计时，按 `Enter` 或 `Esc` 随时收起。
@@ -30,7 +39,6 @@
   - **屏幕常亮**（`caffeinate -di`）：保持系统与桌面窗口渲染活跃，适合 **Computer Use 桌面操控**、投屏演示与日志监看。（*跑 Computer Use 时建议手动把屏幕亮度调至最低以兼顾省电*）
 - **真正在背包里可用的「合盖模式」**：默认关闭、显式勾选并经系统 Touch ID / 管理员授权执行 `pmset -a disablesleep 1`，配合内核 `kqueue` + `trap` 守护机制，停止、超时或应用崩溃退出时自动恢复 `disablesleep 0`。
 - **零轮询电源安全保护**：基于 `IOKit.ps` `IOPSNotificationCreateRunLoopSource` 事件回调（默认低于 `10%` 且未充电时自动停止；可选「拔掉电源时自动停止」；并在启动前预检避免无效授权弹窗）。仅在定时到期或电源保护触发时发送原生系统通知。
-- **自动跟随 AI Agent**（默认开启，可一键关闭）：用 FSEvents 监听 Agent 的会话目录（`~/.claude/projects`、`~/.codex/sessions`、`~/.dsh/sessions`），它们写文件时保持唤醒，停笔 5 分钟后自动释放。实测开销是 **每 20 秒约 0.2 毫秒 CPU**，唤醒次数与菜单栏图标本身相当——作为对比，进程轮询每 30 秒约 160 毫秒且每秒唤醒一次，已否决。只监听文件是否变化，从不读取内容。手动会话永远优先；单次自动会话有 2 小时硬上限，避免误挂整夜。默认开启，装完即可用；首次打开面板会说明监听了哪些目录，开关在偏好设置里。
 
 ---
 
@@ -91,7 +99,7 @@ Homebrew 会把 `SleepSkip.app` 装进 `/Applications`，并链接好 `sleepskip
 
 ### 下载 Release（通用二进制：Apple Silicon + Intel）
 
-1. 前往 [GitHub Releases](https://github.com/LaiYongqiang/SleepSkip/releases) 下载 `SleepSkip-1.2.0-macOS-universal.dmg`，拖入 `/Applications`。
+1. 前往 [GitHub Releases](https://github.com/LaiYongqiang/SleepSkip/releases) 下载最新的 `SleepSkip-*-macOS-universal.dmg`，拖入 `/Applications`。
 2. 当前开源发行包采用本地 Ad-hoc 签名；若首次双击遇 macOS Gatekeeper 拦截，在终端执行一次：
    ```bash
    xattr -cr /Applications/SleepSkip.app

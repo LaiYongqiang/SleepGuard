@@ -33,6 +33,10 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/SleepSkip"
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_DIR/Contents/Info.plist" >/dev/null
+# CFBundleVersion must increase monotonically for Sparkle-style update checks and for
+# Gatekeeper to treat two builds as different. Keeping it as a literal in Info.plist meant
+# every release shipped "8"; derive it from the version instead (1.4.0 -> 140).
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(echo "$VERSION" | tr -d '.')" "$APP_DIR/Contents/Info.plist" >/dev/null
 
 echo "==> Generating AppIcon.icns..."
 swift "$ROOT_DIR/scripts/generate_icon.swift" "$APP_DIR/Contents/Resources/AppIcon.icns"

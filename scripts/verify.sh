@@ -23,17 +23,21 @@ final class MockCaffeinateRunner: CaffeinateRunning {
     var shouldThrowOnStart = false
     var lastMode: GuardMode?
     var lastTimeout: Int?
+    var startCount = 0
+    var stopCount = 0
 
     func start(mode: GuardMode, timeoutSeconds: Int?, onUnexpectedExit: @escaping () -> Void) throws {
         if shouldThrowOnStart {
             throw NSError(domain: "MockCaffeinate", code: 1, userInfo: [NSLocalizedDescriptionKey: "spawn failed"])
         }
+        startCount += 1
         isActive = true
         lastMode = mode
         lastTimeout = timeoutSeconds
     }
 
     func stop() {
+        stopCount += 1
         isActive = false
     }
 }
@@ -41,10 +45,26 @@ final class MockCaffeinateRunner: CaffeinateRunning {
 final class MockBackpackGuard: BackpackGuarding {
     var enableCalls = 0
     var disableCalls = 0
+    /// When true, `enable` withholds its completion so a test can act while authorization is
+    /// still pending — the state a real Touch ID prompt sits in for several seconds.
+    var deferCompletion = false
+    private var pending: ((Result<Void, Error>) -> Void)?
+
     func enable(completion: @escaping (Result<Void, Error>) -> Void) {
         enableCalls += 1
-        completion(.success(()))
+        if deferCompletion {
+            pending = completion
+        } else {
+            completion(.success(()))
+        }
     }
+
+    /// Delivers a withheld completion, as the authorization dialog eventually would.
+    func finishPending() {
+        pending?(.success(()))
+        pending = nil
+    }
+
     func disable() { disableCalls += 1 }
     func checkSleepDisabledAsync(completion: @escaping (Bool) -> Void) { completion(false) }
     func restoreNormalSleepAsync(completion: @escaping (Result<Void, Error>) -> Void) { completion(.success(())) }
@@ -98,6 +118,80 @@ struct VerifyRunner {
         expect(lidScript.contains("/usr/bin/caffeinate -i -w 4242"), "Guard watches the sentinel pid")
         expect(!lidScript.contains("&\n"), "Guard does not background a child that would hold the pipe")
 
+        // Regression: the guard lives under "~/Library/Application Support/...", which contains a
+        // space. Unquoted, `do shell script` split the path, the script never ran, and the command
+        // still exited 0 — a silent no-op the UI reported as success.
+        let spacedScript = "/Users/me/Library/Application Support/SleepSkip/lid-guard.sh"
+        let launch = CommandBuilder.closedLidLaunchScript(scriptPath: spacedScript, pidPath: spacedScript + ".pid")
+        expect(launch.contains("'\(spacedScript)'"), "Launch command single-quotes the script path")
+        expect(launch.contains("'\(spacedScript).pid'"), "Launch command single-quotes the pid path")
+        expect(!launch.contains("/bin/sh \(spacedScript) "), "Script path is not left bare")
+        expect(CommandBuilder.shellSingleQuoted("/tmp/it's") == "'/tmp/it'\\''s'", "Embedded apostrophes are escaped")
+        expect(CommandBuilder.shellSingleQuoted("") == "''", "Empty path still quoted")
+
+        // The quoted command must actually run the script, not merely look right.
+        do {
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("SleepSkip Verify \(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let marker = dir.appendingPathComponent("ran.txt")
+            let guardURL = dir.appendingPathComponent("lid-guard.sh")
+            try "#!/bin/sh\necho ok > \(CommandBuilder.shellSingleQuoted(marker.path))\n"
+                .write(to: guardURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: guardURL.path)
+
+            let shell = Process()
+            shell.executableURL = URL(fileURLWithPath: "/bin/sh")
+            shell.arguments = ["-c", CommandBuilder.closedLidLaunchScript(scriptPath: guardURL.path, pidPath: guardURL.path + ".pid")]
+            try shell.run()
+            shell.waitUntilExit()
+
+            let deadline = Date().addingTimeInterval(2)
+            while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
+                usleep(50_000)
+            }
+            expect(FileManager.default.fileExists(atPath: marker.path), "Quoted launch command really runs the guard")
+        }
+
+        // Regression: the guard's pid check never matched. `proc_pidpath` reports the
+        // interpreter (/bin/bash), so `hasSuffix("lid-guard.sh")` was always false and a
+        // leftover `disablesleep 1` guard was never terminated on relaunch.
+        do {
+            // Synthetic KERN_PROCARGS2 buffer: argc, exe path, NUL padding, argv.
+            func procargs(_ argc: Int32, _ exe: String, _ args: [String]) -> [UInt8] {
+                var bytes = withUnsafeBytes(of: argc) { Array($0) }
+                bytes += Array(exe.utf8) + [0]
+                bytes += [0, 0, 0]
+                for arg in args { bytes += Array(arg.utf8) + [0] }
+                return bytes
+            }
+
+            let guardPath = "/Users/me/Library/Application Support/SleepSkip/lid-guard.sh"
+            let buf = procargs(2, "/bin/bash", ["/bin/sh", guardPath])
+            let parsed = ProcessArguments.parse(buf, count: buf.count)
+            expect(parsed == ["/bin/sh", guardPath], "KERN_PROCARGS2 argv is parsed past the executable path")
+            expect(parsed.contains { $0.contains("lid-guard.sh") }, "Guard script is visible in argv")
+            expect(!ProcessArguments.parse(procargs(1, "/bin/bash", ["/bin/sh"]), count: 64).contains { $0.contains("lid-guard.sh") }, "Unrelated sh process is not mistaken for the guard")
+            expect(ProcessArguments.parse([], count: 0).isEmpty, "Empty buffer yields no arguments")
+            expect(ProcessArguments.parse([0, 0, 0, 0], count: 4).isEmpty, "argc=0 yields no arguments")
+
+            // End-to-end: read a live process's argv through the real sysctl path.
+            // `/bin/sh -c "sleep 5"` execs into `sleep`, losing the script text from argv, so
+            // use an interpreter that stays resident: `sh -s` reads stdin and keeps its argv.
+            let liveInput = Pipe()
+            let live = Process()
+            live.executableURL = URL(fileURLWithPath: "/bin/sh")
+            live.arguments = ["-s", "sleepskip-verify-marker"]
+            live.standardInput = liveInput
+            try live.run()
+            usleep(300_000)
+            let liveArgs = ProcessArguments.read(pid: live.processIdentifier)
+            expect(liveArgs.contains("sleepskip-verify-marker"), "Live process argv is readable")
+            live.terminate()
+            live.waitUntilExit()
+        }
+
         // 2. URLCommandParser & CLIParser checks
         let url = URL(string: "sleepskip://start?mode=display&minutes=90&lock=0")!
         expect(URLCommandParser.parse(url) == .start(mode: .keepDisplay, minutes: 90, lockOnStart: false, allowClosedLid: nil), "URL start parsing")
@@ -111,6 +205,10 @@ struct VerifyRunner {
         expect(CLIParser.parse(arguments: ["SleepSkip", "--", "claude", "--help"]) == .runCommand(arguments: ["claude", "--help"], mode: .background, lockOnFinish: false), "`-- claude --help` passes through")
         expect(CLIParser.parse(arguments: ["SleepSkip", "--version"]) == .version, "Bare --version still reports version")
         expect(CLIParser.parse(arguments: ["SleepSkip", "--"]) == .help, "Dangling -- is not a command")
+        // A typo used to silently launch the GUI; it must fail visibly instead.
+        expect(CLIParser.parse(arguments: ["SleepSkip", "start"]) == .invalid("unknown argument 'start'"), "Unknown subcommand is rejected")
+        expect(CLIParser.parse(arguments: ["SleepSkip", "watch"]) == .invalid("watch needs a numeric pid"), "watch without a pid is rejected")
+        expect(CLIParser.parse(arguments: ["SleepSkip", "--open"]) == .gui(openPopover: true), "Bare --open still launches the GUI")
 
         // 2c. Regression: non-finite durations must never reach Int(_:)
         for raw in ["inf", "Infinity", "-inf", "1e999", "nan"] {
@@ -209,6 +307,36 @@ struct VerifyRunner {
         caf.isActive = false
         manager.reconcileOnWakeOrShow()
         expect(!manager.isRunning && notif.sent.count == 1, "Wake reconcile catches exited caffeinate and notifies once")
+
+        // Regression: stopping while Touch ID was pending launched the session anyway, because
+        // the completion only compared its token and `stopSession` never invalidated it.
+        do {
+            let cafA = MockCaffeinateRunner()
+            let bagA = MockBackpackGuard()
+            let suiteA = "io.github.laiyongqiang.SleepSkip.authrace.\(UUID().uuidString)"
+            let defaultsA = UserDefaults(suiteName: suiteA)!
+            defer { defaultsA.removePersistentDomain(forName: suiteA) }
+            let smA = SessionManager(
+                store: PreferencesStore(defaults: defaultsA),
+                caffeinateRunner: cafA,
+                backpackGuard: bagA,
+                powerMonitor: MockPowerMonitor(),
+                screenLocker: MockScreenLocker(),
+                notifier: MockNotifier(),
+                loginItem: MockLoginItem(),
+                nowProvider: { Date(timeIntervalSince1970: 2_300_000_000) },
+                checkStaleSleepOnInit: false
+            )
+            bagA.deferCompletion = true
+            smA.setAllowClosedLid(true)
+            smA.startConfiguredSession()
+            expect(smA.isAuthorizing && bagA.enableCalls == 1, "Authorization is pending")
+            smA.stopSession(reason: .manual)
+            expect(!smA.isAuthorizing, "Stop clears the pending authorization")
+            // The dialog now returns, seconds after the user already stopped.
+            bagA.finishPending()
+            expect(!smA.isRunning && cafA.startCount == 0, "A stopped authorization does not launch a session")
+        }
 
         // 3b. Rename migration: an upgrade must not lose settings
         let newSuite = "io.github.laiyongqiang.SleepSkip.migrate.\(UUID().uuidString)"
@@ -326,6 +454,64 @@ struct VerifyRunner {
         expect(sm.isFollowingAgents && sm.isRunning, "A fresh quiet-then-active cycle re-arms auto-follow")
         sm.setAutoFollowEnabled(false)
         expect(!sm.isRunning && !sm.isFollowingAgents, "Disabling auto-follow releases everything")
+
+        // Regression: auto-follow never released. `beginAutoFollow` sets `isRunning`, so guarding
+        // on `isRunning` alone swallowed every later transition, including `.inactive`.
+        clock = Date(timeIntervalSince1970: 2_100_000_000)
+        let caf3 = MockCaffeinateRunner()
+        let sm2 = SessionManager(
+            store: store,
+            caffeinateRunner: caf3,
+            backpackGuard: MockBackpackGuard(),
+            powerMonitor: MockPowerMonitor(),
+            screenLocker: MockScreenLocker(),
+            notifier: MockNotifier(),
+            loginItem: MockLoginItem(),
+            nowProvider: { clock },
+            checkStaleSleepOnInit: false
+        )
+        sm2.setAutoFollowEnabled(true)
+        sm2.handleAgentActivity(.active(agents: ["claude-code"], lastActivity: clock))
+        expect(sm2.isRunning, "Auto-follow starts on activity")
+        sm2.handleAgentActivity(.inactive)
+        expect(!sm2.isRunning && !sm2.isFollowingAgents, "Auto-follow releases once agents go quiet")
+
+        // A manual session still wins: auto-follow must not launch over it, nor release it.
+        sm2.startConfiguredSession()
+        expect(sm2.isRunning, "Manual session starts")
+        let manualStarts = caf3.startCount
+        sm2.handleAgentActivity(.active(agents: ["claude-code"], lastActivity: clock))
+        expect(caf3.startCount == manualStarts && !sm2.isFollowingAgents, "Auto-follow does not relaunch a manual session")
+        sm2.handleAgentActivity(.inactive)
+        expect(sm2.isRunning, "A manual session survives agents going quiet")
+        sm2.stopSession(reason: .manual)
+
+        // Regression: the 2h ceiling used to release and re-arm within a second, so a busy agent
+        // was held all night. It must stay released until the agents actually go quiet.
+        clock = Date(timeIntervalSince1970: 2_200_000_000)
+        let caf4 = MockCaffeinateRunner()
+        let sm3 = SessionManager(
+            store: store,
+            caffeinateRunner: caf4,
+            backpackGuard: MockBackpackGuard(),
+            powerMonitor: MockPowerMonitor(),
+            screenLocker: MockScreenLocker(),
+            notifier: MockNotifier(),
+            loginItem: MockLoginItem(),
+            nowProvider: { clock },
+            checkStaleSleepOnInit: false
+        )
+        sm3.setAutoFollowEnabled(true)
+        sm3.handleAgentActivity(.active(agents: ["claude-code"], lastActivity: clock))
+        expect(sm3.isRunning, "Ceiling test: session starts")
+        sm3.handleAutoFollowLimitReached()
+        expect(!sm3.isRunning, "Ceiling releases the assertion")
+        sm3.handleAgentActivity(.active(agents: ["claude-code"], lastActivity: clock))
+        expect(!sm3.isRunning, "Ceiling holds while the agent keeps writing")
+        sm3.handleAgentActivity(.inactive)
+        sm3.handleAgentActivity(.active(agents: ["claude-code"], lastActivity: clock))
+        expect(sm3.isRunning, "A fresh quiet-then-active cycle resumes after the ceiling")
+        sm3.setAutoFollowEnabled(false)
 
         // Default sources point at transcript directories under the home folder.
         let sources = AgentSource.defaults(homeDirectory: URL(fileURLWithPath: "/Users/example"))

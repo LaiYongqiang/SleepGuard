@@ -155,7 +155,12 @@ public final class SessionManager: ObservableObject {
         }
 
         // A manual session always wins; auto-follow never overrides it.
-        guard !isRunning else { return }
+        //
+        // The check must exclude sessions auto-follow started itself. `beginAutoFollow` sets
+        // `isRunning`, so guarding on `isRunning` alone made the first `.active` block every
+        // later transition — including `.inactive` — leaving `endAutoFollow` unreachable and the
+        // assertion held for the full configured duration after the agents had gone quiet.
+        guard !isRunning || isFollowingAgents else { return }
 
         if agentTracker.shouldHoldAssertion(for: state) {
             switch state {
@@ -214,6 +219,11 @@ public final class SessionManager: ObservableObject {
     /// The hard ceiling was hit: release now and require a fresh detection before holding again.
     public func handleAutoFollowLimitReached() {
         autoFollowLimitReached = true
+        // Without this, a still-writing agent re-arms within a second of the release: the monitor
+        // resets its window right after reporting the limit, so the ceiling becomes a periodic
+        // one-second blip instead of the "prevents an accidental all-nighter" guarantee it is
+        // documented as. Suppressing until the agents actually go quiet restores that guarantee.
+        autoFollowSuppressed = true
         endAutoFollow()
         notifier.send(title: l10n.notifAutoFollowLimitTitle, body: l10n.notifAutoFollowLimitBody)
     }
@@ -498,6 +508,12 @@ public final class SessionManager: ObservableObject {
         powerMonitor.stop()
         caffeinateRunner.stop()
         backpackGuard.disable()
+
+        // Invalidate any in-flight authorization. Its completion checks the token, so without
+        // this a session the user explicitly stopped would be launched anyway when Touch ID
+        // returned a few seconds later.
+        activeAuthorizationToken = nil
+        isAuthorizing = false
 
         // A user-initiated stop while agents are still writing should stay stopped; only a fresh
         // quiet period re-arms auto-follow.

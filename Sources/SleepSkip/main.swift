@@ -18,31 +18,37 @@ private func postCLIDistributedNotification(_ name: Notification.Name, pid: Int3
 /// Tracks the wrapped command so SIGINT/SIGTERM can be forwarded to it.
 /// The command is spawned directly by this process (not by caffeinate): caffeinate does not
 /// forward signals, so wrapping it would leave Ctrl+C unable to stop the wrapped agent.
+///
+/// The pid lives in a C `sig_atomic_t` rather than behind an `NSLock`. A signal handler may
+/// interrupt the main thread at any instruction, including while that same thread holds the
+/// lock, and `NSLock` is not async-signal-safe — re-entering it there deadlocks the process.
+/// A single word of naturally-aligned integer storage needs no lock for the handler's read,
+/// and `kill(2)` is itself async-signal-safe.
 private final class CLIChildProcess: @unchecked Sendable {
-    private let lock = NSLock()
-    private var pid: pid_t = 0
-    private var exited = false
+    private let storage = UnsafeMutablePointer<sig_atomic_t>.allocate(capacity: 1)
+
+    init() {
+        storage.initialize(to: 0)
+    }
+
+    deinit {
+        storage.deinitialize(count: 1)
+        storage.deallocate()
+    }
 
     func set(_ pid: pid_t) {
-        lock.lock()
-        self.pid = pid
-        lock.unlock()
+        storage.pointee = sig_atomic_t(pid)
     }
 
+    /// Zero means "no child to forward to"; the child's exit is recorded by clearing the pid.
     func clear() {
-        lock.lock()
-        pid = 0
-        exited = true
-        lock.unlock()
+        storage.pointee = 0
     }
 
-    /// Async-signal-safe: only reads a pid and calls kill(2).
+    /// Async-signal-safe: reads one word and calls kill(2).
     func forward(_ signalNumber: Int32) {
-        lock.lock()
-        let target = pid
-        let done = exited
-        lock.unlock()
-        guard !done, target > 0 else { return }
+        let target = pid_t(storage.pointee)
+        guard target > 0 else { return }
         kill(target, signalNumber)
     }
 }
@@ -183,6 +189,10 @@ case .runCommand(let cmdArgs, let mode, let lockOnFinish):
 
 case .watchPID(let targetPID, let mode, let lockOnFinish):
     exit(runWatchPID(targetPID: targetPID, mode: mode, lockOnFinish: lockOnFinish))
+
+case .invalid(let reason):
+    fputs("SleepSkip CLI error: \(reason)\nRun `SleepSkip --help` for usage.\n", stderr)
+    exit(2)
 
 case .gui:
     let app = NSApplication.shared

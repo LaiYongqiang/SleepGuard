@@ -20,6 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var cliProcessSource: DispatchSourceProcess?
     private var wakeObserver: NSObjectProtocol?
     private var agentMonitor: AgentActivityMonitor?
+    /// False when this process is a duplicate that never took ownership of any session state.
+    /// Guards teardown so a duplicate's exit cannot stop the primary instance's session.
+    private var didStartPrimaryInstance = true
 
     private let store: PreferencesStore
     let sessionManager: SessionManager
@@ -44,9 +47,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if terminateIfDuplicateInstance() {
+            // A duplicate must not tear down the primary's state on the way out: terminating here
+            // runs `applicationWillTerminate`, which calls `stopSession` and would disable the
+            // primary instance's backpack guard. Nothing was started by this instance, so skip
+            // teardown entirely.
+            didStartPrimaryInstance = false
             NSApp.terminate(nil)
             return
         }
+        didStartPrimaryInstance = true
 
         NSApp.setActivationPolicy(.accessory)
         setupSignalHandlers()
@@ -537,6 +546,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         stopWatchingExternalCLI()
         stopDisplayTimer()
+        // A duplicate instance never started anything; stopping here would disable the guard the
+        // primary instance is relying on.
+        guard didStartPrimaryInstance else { return }
         sessionManager.stopSession(reason: .silent)
     }
 }
