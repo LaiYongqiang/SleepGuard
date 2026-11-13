@@ -248,7 +248,7 @@ final class SleepSkipCoreTests: XCTestCase {
         XCTAssertEqual(initial.lockOnStart, true)
         XCTAssertEqual(initial.allowClosedLid, false)
         XCTAssertEqual(initial.stopOnUnplug, false)
-        XCTAssertEqual(initial.autoFollowAgents, false)
+        XCTAssertEqual(initial.autoFollowAgents, true)
         XCTAssertEqual(initial.batteryThresholdPercent, 10)
 
         var updated = initial
@@ -258,7 +258,7 @@ final class SleepSkipCoreTests: XCTestCase {
         updated.lockOnStart = false
         updated.allowClosedLid = true
         updated.stopOnUnplug = true
-        updated.autoFollowAgents = true
+        updated.autoFollowAgents = false
         updated.language = .en
         store.save(updated)
 

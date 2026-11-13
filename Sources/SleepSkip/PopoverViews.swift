@@ -21,6 +21,10 @@ struct SleepSkipPopoverView: View {
                 cliBanner(cli)
             }
 
+            if manager.showAutoFollowNotice {
+                autoFollowNotice
+            }
+
             if manager.showSettings {
                 settingsContent
             } else if manager.isRunning {
@@ -111,6 +115,41 @@ struct SleepSkipPopoverView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Color.red.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    /// Shown once, on first launch, because auto-follow is on by default and watches a folder.
+    /// Telling the user up front is what makes "works without configuration" honest.
+    private var autoFollowNotice: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11))
+                    .foregroundColor(.accentColor)
+                Text(t.autoFollowNoticeTitle)
+                    .font(.system(size: 11, weight: .semibold))
+                Spacer()
+                Button(action: { manager.dismissAutoFollowNotice() }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            Text(t.autoFollowNoticeBody)
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.accentColor.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
         )
     }
 
@@ -648,10 +687,28 @@ struct SleepSkipPopoverView: View {
             }
 
             if manager.config.autoFollowAgents {
-                Text(t.autoFollowDetail)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if manager.agentSources.isEmpty {
+                    // Honest state: the switch is on but there is nothing to watch.
+                    HStack(spacing: 6) {
+                        Image(systemName: "questionmark.folder")
+                            .font(.system(size: 10))
+                            .foregroundColor(.orange)
+                        Text(t.autoFollowUnavailable)
+                            .font(.system(size: 10))
+                            .foregroundColor(.orange)
+                    }
+                } else {
+                    Text(t.autoFollowDetail)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("\(t.autoFollowWatching): \(manager.agentSources.map(\.path).joined(separator: ", "))")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
 
                 if manager.autoFollowLimitReached {
                     HStack(spacing: 6) {

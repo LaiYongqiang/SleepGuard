@@ -70,6 +70,12 @@ public final class SessionManager: ObservableObject {
     /// immediately wake itself again. Cleared once all agents have gone quiet.
     private var autoFollowSuppressed = false
 
+    /// First-run explanation of what auto-follow watches. Shown once, then never again.
+    @Published public var showAutoFollowNotice: Bool = false
+    /// Directories that actually exist on this machine, for display. Empty means the switch has
+    /// nothing to watch.
+    @Published public var agentSources: [AgentSource] = []
+
     private let store: PreferencesStore
     private let caffeinateRunner: CaffeinateRunning
     private let backpackGuard: BackpackGuarding
@@ -85,6 +91,8 @@ public final class SessionManager: ObservableObject {
     public var onRequestClosePopover: (() -> Void)?
     /// Called when auto-follow starts or stops so the host can start/stop the FSEvents monitor.
     public var onAutoFollowToggled: ((_ enabled: Bool) -> Void)?
+    /// Called when the first-run notice is dismissed so the host can persist that fact.
+    public var onAutoFollowNoticeDismissed: (() -> Void)?
 
     public var l10n: L10n {
         L10n(language: config.language)
@@ -98,6 +106,27 @@ public final class SessionManager: ObservableObject {
         config.autoFollowAgents
     }
 
+    /// Surfaces the one-time notice. Called at launch when the setting is on and the user has
+    /// not dismissed it yet.
+    public func presentAutoFollowNoticeIfNeeded(hasDismissed: Bool) {
+        showAutoFollowNotice = config.autoFollowAgents && !hasDismissed
+    }
+
+    public func setAgentSources(_ sources: [AgentSource]) {
+        agentSources = sources
+    }
+
+    public func dismissAutoFollowNotice() {
+        showAutoFollowNotice = false
+        onAutoFollowNoticeDismissed?()
+    }
+
+    /// Called when the panel closes. A notice the user has already seen should not reappear.
+    public func retireAutoFollowNoticeOnPanelClose() {
+        guard showAutoFollowNotice else { return }
+        dismissAutoFollowNotice()
+    }
+
     /// Starts or stops watching for agent activity. The monitor itself is owned by the host
     /// so the core stays free of FSEvents; this only flips the preference and notifies.
     public func setAutoFollowEnabled(_ enabled: Bool) {
@@ -107,6 +136,7 @@ public final class SessionManager: ObservableObject {
         persistConfig()
         if !enabled {
             endAutoFollow()
+            showAutoFollowNotice = false
         }
         onAutoFollowToggled?(enabled)
         onStateChange?(isEffectivelyActive, activeClosedLid)
