@@ -276,6 +276,8 @@ struct SleepSkipPopoverView: View {
                                     .font(.system(size: 10))
                                     .foregroundColor(.orange)
                                     .fixedSize(horizontal: false, vertical: true)
+
+                                lidStrategyPicker(manager: manager, t: t)
                             }
                         }
                         .padding(.horizontal, 10)
@@ -789,6 +791,36 @@ struct SleepSkipPopoverView: View {
                 )
         }
         .buttonStyle(PlainButtonStyle())
+    }
+
+    /// Chooses how lid-close sleep is suppressed. The two options differ in whether the user
+    /// has to authorize, and in whether the suppression survives a cable being plugged back in
+    /// with the lid shut — see `docs/CLAMSHELL-RESEARCH.md`.
+    private func lidStrategyPicker(manager: SessionManager, t: L10n) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(t.lidModeSectionTitle)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            Picker("", selection: Binding(
+                get: { manager.config.closedLidStrategy },
+                set: { manager.setClosedLidStrategy($0) }
+            )) {
+                Text(t.lidModeStandard).tag(ClosedLidStrategy.unprivileged)
+                Text(t.lidModePrivileged).tag(ClosedLidStrategy.privileged)
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+            .font(.system(size: 11))
+
+            Text(manager.config.closedLidStrategy == .unprivileged
+                 ? t.lidModeStandardDetail
+                 : t.lidModePrivilegedDetail)
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 2)
     }
 
     private func cardBackground(selected: Bool) -> some View {

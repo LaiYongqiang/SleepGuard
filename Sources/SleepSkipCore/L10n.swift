@@ -43,8 +43,33 @@ public struct L10n {
     public var closedLidLabel: String { isZh ? "合盖继续运行（背包）" : "Stay awake lid-closed" }
     public var closedLidWarning: String {
         isZh
-            ? "需 Touch ID 授权 · 停止或退出时自动恢复休眠 · 注意背包散热"
-            : "Requires Touch ID auth · Auto-restores sleep on exit · Watch thermals"
+            ? "停止或退出时自动恢复休眠 · 注意背包散热"
+            : "Auto-restores sleep on exit · Watch thermals"
+    }
+
+    public var lidModeSectionTitle: String {
+        isZh ? "合盖保持方式" : "Lid-closed method"
+    }
+    public var lidModeStandard: String {
+        isZh ? "标准（无需授权）" : "Standard (no auth)"
+    }
+    public var lidModeStandardDetail: String {
+        isZh
+            ? "开箱即用。已知限制：合盖状态下插回电源后，约 6–9 秒会进入睡眠。"
+            : "Works out of the box. Known limit: plugging the cable back in while the lid is shut sleeps the Mac after 6–9 s."
+    }
+    public var lidModePrivileged: String {
+        isZh ? "兼容（需管理员授权）" : "Compatibility (admin auth)"
+    }
+    public var lidModePrivilegedDetail: String {
+        isZh
+            ? "每次启动需授权一次。可跨电源切换保持，适合背包通勤场景。"
+            : "One authorization per start. Survives power-source changes — the right choice for a backpack commute."
+    }
+    public var unprivilegedLidUnavailable: String {
+        isZh
+            ? "系统拒绝了无授权的合盖请求，请在设置里改用兼容模式。"
+            : "The system rejected the no-auth lid request. Switch to Compatibility mode in Preferences."
     }
 
     public var customDuration: String { isZh ? "自定义" : "Custom" }

@@ -46,12 +46,36 @@ public enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// How lid-closed sleep is suppressed.
+///
+/// Both strategies keep a closed lid awake. They differ in what they cost and in what they
+/// can guarantee:
+///
+/// - `.unprivileged` sets `kPMSetClamshellSleepState` (IOPMrootDomain selector 12) and needs no
+///   authorization. Measured limits: it holds for a full lid-closed session on a steady power
+///   source, but **the machine sleeps 6–9 s after a power cable is plugged back in while the lid
+///   is closed** — powerd's power-change path re-evaluates the lid and ignores the flag. Never
+///   Sleep has the same limit; it was measured identically.
+/// - `.privileged` uses `pmset -a disablesleep 1`, which powerd also honours on a power change.
+///   It costs one admin authorization per start.
+///
+/// See `docs/CLAMSHELL-RESEARCH.md` for the measurements behind this.
+public enum ClosedLidStrategy: String, CaseIterable, Sendable {
+    /// No authorization. Fails to hold if the cable is reconnected with the lid shut.
+    case unprivileged
+    /// Admin authorization once per start. Holds across power changes.
+    case privileged
+
+    public var requiresAuthorization: Bool { self == .privileged }
+}
+
 public struct SessionConfig: Equatable, Sendable {
     public var mode: GuardMode
     public var durationMinutes: Double
     public var customMinutes: Double
     public var lockOnStart: Bool
     public var allowClosedLid: Bool
+    public var closedLidStrategy: ClosedLidStrategy
     public var batteryThresholdPercent: Int
     public var stopOnUnplug: Bool
     public var autoFollowAgents: Bool
@@ -63,6 +87,7 @@ public struct SessionConfig: Equatable, Sendable {
         customMinutes: Double = 90,
         lockOnStart: Bool = true,
         allowClosedLid: Bool = false,
+        closedLidStrategy: ClosedLidStrategy = .unprivileged,
         batteryThresholdPercent: Int = 10,
         stopOnUnplug: Bool = false,
         autoFollowAgents: Bool = true,
@@ -73,6 +98,7 @@ public struct SessionConfig: Equatable, Sendable {
         self.customMinutes = customMinutes
         self.lockOnStart = lockOnStart
         self.allowClosedLid = allowClosedLid
+        self.closedLidStrategy = closedLidStrategy
         self.batteryThresholdPercent = batteryThresholdPercent
         self.stopOnUnplug = stopOnUnplug
         self.autoFollowAgents = autoFollowAgents
@@ -260,7 +286,7 @@ public enum CLIParser {
 public enum AppInfo {
     /// Single source of truth for the version shown in the CLI banner and the settings panel.
     /// The build script rewrites this value from the git tag, so it never drifts from the release.
-    public static let version = "1.4.0"
+    public static let version = "1.5.0"
 
     public static let repositoryURL = "https://github.com/LaiYongqiang/SleepSkip"
 }

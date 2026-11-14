@@ -22,6 +22,17 @@ public protocol BackpackGuarding: AnyObject {
     func restoreNormalSleepAsync(completion: @escaping (Result<Void, Error>) -> Void)
 }
 
+/// Keeps a closed lid from sleeping the Mac without requiring authorization.
+///
+/// No read-back is possible: the flag is not published anywhere, so `enable` can only report
+/// whether the call was accepted. `checkSleepDisabledAsync` does not apply here — the
+/// unprivileged path never touches the system-wide `SleepDisabled` flag.
+public protocol ClosedLidGuarding: AnyObject {
+    var isEngaged: Bool { get }
+    func enable(completion: @escaping (Result<Void, Error>) -> Void)
+    func disable()
+}
+
 public protocol PowerMonitoring: AnyObject {
     func currentPowerSnapshot() -> PowerSnapshot?
     func start(thresholdPercent: Int, stopOnUnplug: Bool, onEvent: @escaping (PowerEvent) -> Void)
@@ -81,6 +92,8 @@ public final class SessionManager: ObservableObject {
     private let store: PreferencesStore
     private let caffeinateRunner: CaffeinateRunning
     private let backpackGuard: BackpackGuarding
+    /// No-authorization lid guard, used when `config.closedLidStrategy == .unprivileged`.
+    private let unprivilegedLidGuard: ClosedLidGuarding?
     private let powerMonitor: PowerMonitoring
     private let screenLocker: ScreenLocking
     private let notifier: UserNotifying
@@ -237,6 +250,7 @@ public final class SessionManager: ObservableObject {
         store: PreferencesStore = PreferencesStore(),
         caffeinateRunner: CaffeinateRunning,
         backpackGuard: BackpackGuarding,
+        unprivilegedLidGuard: ClosedLidGuarding? = nil,
         powerMonitor: PowerMonitoring,
         screenLocker: ScreenLocking,
         notifier: UserNotifying,
@@ -248,6 +262,7 @@ public final class SessionManager: ObservableObject {
         self.store = store
         self.caffeinateRunner = caffeinateRunner
         self.backpackGuard = backpackGuard
+        self.unprivilegedLidGuard = unprivilegedLidGuard
         self.powerMonitor = powerMonitor
         self.screenLocker = screenLocker
         self.notifier = notifier
@@ -307,6 +322,14 @@ public final class SessionManager: ObservableObject {
 
     public func setAllowClosedLid(_ enabled: Bool) {
         config.allowClosedLid = enabled
+        persistConfig()
+    }
+
+    /// Switches how lid-close sleep is suppressed. Takes effect on the next session; an active
+    /// session keeps whatever it started with, since swapping mechanisms mid-flight would leave
+    /// one of them disengaged without the user asking.
+    public func setClosedLidStrategy(_ strategy: ClosedLidStrategy) {
+        config.closedLidStrategy = strategy
         persistConfig()
     }
 
@@ -395,32 +418,70 @@ public final class SessionManager: ObservableObject {
         }
 
         if wantClosedLid {
-            isAuthorizing = true
-            // An authorization dialog that is dismissed without a result, or an AppleScript call
-            // that never returns, used to leave the button spinning forever with no way out.
-            let authorizationToken = UUID()
-            activeAuthorizationToken = authorizationToken
-            DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
-                guard let self, self.isAuthorizing, self.activeAuthorizationToken == authorizationToken else { return }
-                self.isAuthorizing = false
-                self.activeAuthorizationToken = nil
-                self.errorMessage = self.l10n.authorizationTimedOut
-            }
-            backpackGuard.enable { [weak self] result in
-                guard let self, self.activeAuthorizationToken == authorizationToken else { return }
-                self.activeAuthorizationToken = nil
-                self.isAuthorizing = false
-                switch result {
-                case .success:
-                    self.staleSleepDisabled = false
-                    self.launchCaffeinate(mode: targetMode, minutes: targetMinutes, closedLid: true, lockImmediately: wantLock)
-                case .failure(let error):
-                    self.errorMessage = error.localizedDescription
-                }
+            switch config.closedLidStrategy {
+            case .unprivileged:
+                startUnprivilegedLidGuard(
+                    mode: targetMode,
+                    minutes: targetMinutes,
+                    lockImmediately: wantLock
+                )
+            case .privileged:
+                startPrivilegedLidGuard(
+                    mode: targetMode,
+                    minutes: targetMinutes,
+                    lockImmediately: wantLock
+                )
             }
         } else {
+            unprivilegedLidGuard?.disable()
             backpackGuard.disable()
             launchCaffeinate(mode: targetMode, minutes: targetMinutes, closedLid: false, lockImmediately: wantLock)
+        }
+    }
+
+    /// No authorization: set the clamshell flag and keep re-setting it.
+    private func startUnprivilegedLidGuard(mode: GuardMode, minutes: Double, lockImmediately: Bool) {
+        guard let unprivilegedLidGuard else {
+            errorMessage = l10n.unprivilegedLidUnavailable
+            return
+        }
+        unprivilegedLidGuard.enable { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.launchCaffeinate(mode: mode, minutes: minutes, closedLid: true, lockImmediately: lockImmediately)
+            case .failure(let error):
+                self.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Admin authorization via `pmset -a disablesleep 1`. Survives a power-source change, which
+    /// the unprivileged path does not.
+    private func startPrivilegedLidGuard(mode: GuardMode, minutes: Double, lockImmediately: Bool) {
+        unprivilegedLidGuard?.disable()
+        isAuthorizing = true
+        // An authorization dialog that is dismissed without a result, or an AppleScript call
+        // that never returns, used to leave the button spinning forever with no way out.
+        let authorizationToken = UUID()
+        activeAuthorizationToken = authorizationToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+            guard let self, self.isAuthorizing, self.activeAuthorizationToken == authorizationToken else { return }
+            self.isAuthorizing = false
+            self.activeAuthorizationToken = nil
+            self.errorMessage = self.l10n.authorizationTimedOut
+        }
+        backpackGuard.enable { [weak self] result in
+            guard let self, self.activeAuthorizationToken == authorizationToken else { return }
+            self.activeAuthorizationToken = nil
+            self.isAuthorizing = false
+            switch result {
+            case .success:
+                self.staleSleepDisabled = false
+                self.launchCaffeinate(mode: mode, minutes: minutes, closedLid: true, lockImmediately: lockImmediately)
+            case .failure(let error):
+                self.errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -434,6 +495,7 @@ public final class SessionManager: ObservableObject {
         } catch {
             if closedLid {
                 backpackGuard.disable()
+                unprivilegedLidGuard?.disable()
             }
             errorMessage = error.localizedDescription
             return
@@ -508,6 +570,7 @@ public final class SessionManager: ObservableObject {
         powerMonitor.stop()
         caffeinateRunner.stop()
         backpackGuard.disable()
+        unprivilegedLidGuard?.disable()
 
         // Invalidate any in-flight authorization. Its completion checks the token, so without
         // this a session the user explicitly stopped would be launched anyway when Touch ID
