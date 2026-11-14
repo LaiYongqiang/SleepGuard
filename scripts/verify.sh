@@ -70,6 +70,23 @@ final class MockBackpackGuard: BackpackGuarding {
     func restoreNormalSleepAsync(completion: @escaping (Result<Void, Error>) -> Void) { completion(.success(())) }
 }
 
+final class MockLidGuard: ClosedLidGuarding {
+    var isEngaged = false
+    var enableCalls = 0
+    var disableCalls = 0
+    var shouldFail = false
+    func enable(completion: @escaping (Result<Void, Error>) -> Void) {
+        enableCalls += 1
+        if shouldFail {
+            completion(.failure(NSError(domain: "MockLidGuard", code: -1, userInfo: [NSLocalizedDescriptionKey: "rejected"])))
+        } else {
+            isEngaged = true
+            completion(.success(()))
+        }
+    }
+    func disable() { disableCalls += 1; isEngaged = false }
+}
+
 final class MockPowerMonitor: PowerMonitoring {
     var snapshot: PowerSnapshot? = PowerSnapshot(onBattery: false, percentage: 100)
     var eventHandler: ((PowerEvent) -> Void)?
@@ -329,6 +346,7 @@ struct VerifyRunner {
             )
             bagA.deferCompletion = true
             smA.setAllowClosedLid(true)
+            smA.setClosedLidStrategy(.privileged)
             smA.startConfiguredSession()
             expect(smA.isAuthorizing && bagA.enableCalls == 1, "Authorization is pending")
             smA.stopSession(reason: .manual)
@@ -477,6 +495,7 @@ struct VerifyRunner {
         expect(!sm2.isRunning && !sm2.isFollowingAgents, "Auto-follow releases once agents go quiet")
 
         // A manual session still wins: auto-follow must not launch over it, nor release it.
+        sm2.setAllowClosedLid(false)   // this manager has no lid guard wired up
         sm2.startConfiguredSession()
         expect(sm2.isRunning, "Manual session starts")
         let manualStarts = caf3.startCount
@@ -525,6 +544,68 @@ struct VerifyRunner {
         expect(!sources[0].matches(filePath: "/Users/example/.claude/projects/p/session.v4.jsonl.zstd"), "Claude ignores .zstd")
         expect(sources[0].matches(filePath: "/Users/example/.claude/projects/p/s.jsonl"), "Claude matches .jsonl")
         expect(!dsh.matches(filePath: "/Users/example/.dsh/sessions-old/s.jsonl"), "Prefix collision rejected")
+
+        // 4c. Lid-closed strategy routing
+        do {
+            func makeManager(strategy: ClosedLidStrategy, guard guardMock: MockLidGuard, bag: MockBackpackGuard) -> SessionManager {
+                let suite = "io.github.laiyongqiang.SleepSkip.lidmode.\(UUID().uuidString)"
+                let d = UserDefaults(suiteName: suite)!
+                d.removePersistentDomain(forName: suite)
+                let m = SessionManager(
+                    store: PreferencesStore(defaults: d),
+                    caffeinateRunner: MockCaffeinateRunner(),
+                    backpackGuard: bag,
+                    unprivilegedLidGuard: guardMock,
+                    powerMonitor: MockPowerMonitor(),
+                    screenLocker: MockScreenLocker(),
+                    notifier: MockNotifier(),
+                    loginItem: MockLoginItem(),
+                    nowProvider: { Date(timeIntervalSince1970: 2_400_000_000) },
+                    checkStaleSleepOnInit: false
+                )
+                m.setAllowClosedLid(true)
+                m.setClosedLidStrategy(strategy)
+                return m
+            }
+
+            // Default is the no-auth path, and it must not touch the privileged guard.
+            let defaultCfg = SessionConfig()
+            expect(defaultCfg.closedLidStrategy == .unprivileged, "Closed-lid strategy defaults to unprivileged")
+
+            let lidA = MockLidGuard(); let bagA2 = MockBackpackGuard()
+            let mA = makeManager(strategy: .unprivileged, guard: lidA, bag: bagA2)
+            mA.startConfiguredSession()
+            expect(lidA.enableCalls == 1 && lidA.isEngaged, "Unprivileged strategy engages the flag guard")
+            expect(bagA2.enableCalls == 0, "Unprivileged strategy never asks for authorization")
+            expect(!mA.isAuthorizing, "Unprivileged strategy does not enter the authorizing state")
+            expect(mA.isRunning && mA.activeClosedLid, "Unprivileged session starts")
+            mA.stopSession(reason: .manual)
+            expect(!lidA.isEngaged && lidA.disableCalls > 0, "Stopping releases the unprivileged guard")
+
+            let lidB = MockLidGuard(); let bagB = MockBackpackGuard()
+            let mB = makeManager(strategy: .privileged, guard: lidB, bag: bagB)
+            mB.startConfiguredSession()
+            expect(bagB.enableCalls == 1, "Privileged strategy asks for authorization")
+            expect(lidB.enableCalls == 0, "Privileged strategy leaves the unprivileged guard alone")
+            mB.stopSession(reason: .manual)
+
+            // A rejected no-auth request must surface, not silently claim success.
+            let lidC = MockLidGuard(); lidC.shouldFail = true
+            let mC = makeManager(strategy: .unprivileged, guard: lidC, bag: MockBackpackGuard())
+            mC.startConfiguredSession()
+            expect(!mC.isRunning && mC.errorMessage != nil, "A rejected no-auth request reports an error")
+            expect(!mC.activeClosedLid, "A rejected no-auth request does not claim lid mode")
+
+            // Persisted choice survives a reload.
+            let suite = "io.github.laiyongqiang.SleepSkip.lidpersist.\(UUID().uuidString)"
+            let d = UserDefaults(suiteName: suite)!
+            defer { d.removePersistentDomain(forName: suite) }
+            let store = PreferencesStore(defaults: d)
+            var cfg = store.load()
+            cfg.closedLidStrategy = .privileged
+            store.save(cfg)
+            expect(store.load().closedLidStrategy == .privileged, "Strategy persists across reload")
+        }
 
         // 5. Live caffeinate -w lifecycle check
         let sentinel = Process()

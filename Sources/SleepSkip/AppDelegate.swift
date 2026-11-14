@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             store: store,
             caffeinateRunner: CaffeinateRunner(),
             backpackGuard: BackpackGuard(),
+            unprivilegedLidGuard: UnprivilegedLidGuard(),
             powerMonitor: PowerMonitor(),
             screenLocker: ScreenLocker(),
             notifier: NativeNotifier(),

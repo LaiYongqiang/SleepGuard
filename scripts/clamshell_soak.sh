@@ -88,14 +88,69 @@ clang -O2 -framework IOKit -framework CoreFoundation \
       "$RUN_DIR/clamshellctl.c" -o "$CTL" 2>/dev/null \
   || fail "failed to build clamshellctl" 2
 
+# Re-arms the selector the instant the power source changes. Without this, a
+# cable plug/unplug resets the flag and the machine sleeps on the next lid
+# event; a 60 s polling re-arm leaves up to a minute of exposure (measured:
+# the machine slept 6 s after the cable went back in).
+cat > "$RUN_DIR/pswatch.c" <<'C'
+#include <stdio.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
+#include <IOKit/ps/IOPowerSources.h>
+#include <IOKit/pwr_mgt/IOPMLib.h>
+#include <IOKit/pwr_mgt/IOPMLibDefs.h>
+static const char *gLogPath;
+static void stamp(const char *tag) {
+    FILE *f = fopen(gLogPath, "a");
+    if (!f) return;
+    time_t t = time(NULL);
+    struct tm lt;
+    localtime_r(&t, &lt);
+    fprintf(f, "%04d-%02d-%02d %02d:%02d:%02d %s\n",
+            1900 + lt.tm_year, lt.tm_mon + 1, lt.tm_mday,
+            lt.tm_hour, lt.tm_min, lt.tm_sec, tag);
+    fclose(f);
+}
+static void arm(void) {
+    io_connect_t c = IOPMFindPowerManagement(kIOMainPortDefault);
+    if (!c) return;
+    uint64_t one = 1;
+    IOConnectCallScalarMethod(c, kPMSetClamshellSleepState, &one, 1, NULL, NULL);
+    IOServiceClose(c);
+}
+static void on_change(void *ctx) {
+    arm();
+    stamp("POWERCHANGE re-armed selector=1");
+}
+int main(int argc, char **argv) {
+    if (argc < 2) return 2;
+    gLogPath = argv[1];
+    arm();
+    CFRunLoopSourceRef src = IOPSNotificationCreateRunLoopSource(on_change, NULL);
+    if (!src) return 1;
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), src, kCFRunLoopDefaultMode);
+    stamp("PSWATCH started");
+    CFRunLoopRun();
+    return 0;
+}
+C
+
+clang -O2 -framework IOKit -framework CoreFoundation \
+      "$RUN_DIR/pswatch.c" -o "$RUN_DIR/pswatch" 2>/dev/null \
+  || fail "failed to build pswatch" 2
+
 # --- cleanup -----------------------------------------------------------------
 
 CAFFEINATE_PID=""
+PSWATCH_PID=""
 
 cleanup() {
   touch "$STOP" 2>/dev/null || true
   if [ -n "$CAFFEINATE_PID" ]; then
     kill "$CAFFEINATE_PID" 2>/dev/null || true
+  fi
+  if [ -n "$PSWATCH_PID" ]; then
+    kill "$PSWATCH_PID" 2>/dev/null || true
   fi
   "$CTL" 0 2>/dev/null || true
   echo "$(date '+%F %T') SELECTOR restored=0" >> "$LOG"
@@ -122,6 +177,11 @@ arm() {
 arm
 /usr/bin/caffeinate -i -w $$ >/dev/null 2>&1 &
 CAFFEINATE_PID=$!
+
+# Event-driven re-arm on power-source changes, so a cable swap cannot leave the
+# selector reset for the rest of the polling interval.
+"$RUN_DIR/pswatch" "$LOG" >/dev/null 2>&1 &
+PSWATCH_PID=$!
 
 # Independent ground truth: snapshot the sleep-event count before the soak so
 # the verdict does not depend solely on this process staying scheduled.
@@ -170,6 +230,7 @@ done
 
 touch "$STOP"
 ARMS=$(grep -c 'SELECTOR armed=1' "$LOG" || true)
+POWERCHANGES=$(grep -c 'POWERCHANGE re-armed' "$LOG" || true)
 FAILED_ARMS=$(grep -c 'SELECTOR ARM FAILED' "$LOG" || true)
 LID_FRACTION=0
 [ "$TOTAL_SAMPLES" -gt 0 ] && LID_FRACTION=$(( LID_CLOSED_SAMPLES * 100 / TOTAL_SAMPLES ))
@@ -182,7 +243,7 @@ NEW_SLEEPS=$(( SLEEP_AFTER - SLEEP_MARK ))
 NEW_SLEEP_DETAIL="$(pmset -g log 2>/dev/null \
   | awk '$0 ~ /Entering Sleep state/ && NR > 0' | tail -n 3 | sed 's/^ *//')"
 
-echo "$(date '+%F %T') SOAK end mode=$MODE arms=$ARMS failed_arms=$FAILED_ARMS gaps=$GAPS lid_closed=${LID_FRACTION}% samples=$TOTAL_SAMPLES new_sleeps=$NEW_SLEEPS" >> "$LOG"
+echo "$(date '+%F %T') SOAK end mode=$MODE arms=$ARMS failed_arms=$FAILED_ARMS gaps=$GAPS lid_closed=${LID_FRACTION}% samples=$TOTAL_SAMPLES new_sleeps=$NEW_SLEEPS power_changes=$POWERCHANGES" >> "$LOG"
 [ "$NEW_SLEEPS" -gt 0 ] && printf '%s\n' "$NEW_SLEEP_DETAIL" >> "$LOG"
 
 if [ "$NEW_SLEEPS" -gt 0 ]; then
@@ -210,5 +271,5 @@ if [ "$LID_FRACTION" -lt 50 ]; then
   exit 1
 fi
 
-echo "PASS: ${MINUTES}min soak, $ARMS re-arms, 0 gaps, lid closed ${LID_FRACTION}% of samples."
+echo "PASS: ${MINUTES}min soak, $ARMS re-arms, $POWERCHANGES power-change re-arms, 0 gaps, lid closed ${LID_FRACTION}% of samples."
 echo "Log: $LOG"

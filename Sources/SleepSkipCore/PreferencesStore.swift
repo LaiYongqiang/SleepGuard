@@ -7,6 +7,7 @@ public final class PreferencesStore {
         static let customMinutes = "sleepskip.customMinutes"
         static let lockOnStart = "sleepskip.lockOnStart"
         static let allowClosedLid = "sleepskip.allowClosedLid"
+        static let closedLidStrategy = "sleepskip.closedLidStrategy"
         static let batteryThreshold = "sleepskip.batteryThresholdPercent"
         static let stopOnUnplug = "sleepskip.stopOnUnplug"
         static let autoFollowAgents = "sleepskip.autoFollowAgents"
@@ -48,7 +49,7 @@ public final class PreferencesStore {
 
         let keys = [
             Keys.mode, Keys.durationMinutes, Keys.customMinutes, Keys.lockOnStart,
-            Keys.allowClosedLid, Keys.batteryThreshold, Keys.stopOnUnplug,
+            Keys.allowClosedLid, Keys.closedLidStrategy, Keys.batteryThreshold, Keys.stopOnUnplug,
             Keys.autoFollowAgents, Keys.language,
         ]
         for key in keys {
@@ -104,6 +105,16 @@ public final class PreferencesStore {
             allowClosedLid = false
         }
 
+        // Defaults to the no-authorization path: the app should work out of the box. Anyone
+        // who needs the power-change guarantee can switch to the privileged path in Preferences.
+        let closedLidStrategy: ClosedLidStrategy
+        if let raw = defaults.string(forKey: Keys.closedLidStrategy),
+           let parsed = ClosedLidStrategy(rawValue: raw) {
+            closedLidStrategy = parsed
+        } else {
+            closedLidStrategy = .unprivileged
+        }
+
         let batteryThreshold: Int
         if defaults.object(forKey: Keys.batteryThreshold) != nil {
             batteryThreshold = max(0, defaults.integer(forKey: Keys.batteryThreshold))
@@ -136,6 +147,7 @@ public final class PreferencesStore {
             customMinutes: customMinutes,
             lockOnStart: lockOnStart,
             allowClosedLid: allowClosedLid,
+            closedLidStrategy: closedLidStrategy,
             batteryThresholdPercent: batteryThreshold,
             stopOnUnplug: stopOnUnplug,
             autoFollowAgents: autoFollowAgents,
@@ -149,6 +161,7 @@ public final class PreferencesStore {
         defaults.set(config.customMinutes, forKey: Keys.customMinutes)
         defaults.set(config.lockOnStart, forKey: Keys.lockOnStart)
         defaults.set(config.allowClosedLid, forKey: Keys.allowClosedLid)
+        defaults.set(config.closedLidStrategy.rawValue, forKey: Keys.closedLidStrategy)
         defaults.set(config.batteryThresholdPercent, forKey: Keys.batteryThreshold)
         defaults.set(config.stopOnUnplug, forKey: Keys.stopOnUnplug)
         defaults.set(config.autoFollowAgents, forKey: Keys.autoFollowAgents)
